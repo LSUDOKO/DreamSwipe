@@ -38,11 +38,31 @@
       "tier": "Free",
       "status": "Pending",
       "note": "Created on live Shannon testnet to prove the state machine end to end."
+    },
+    "fullLifecycle": {
+      "verifiedAt": "2026-09-09",
+      "duelId": "0xbf334ade84b710e5",
+      "steps": [
+        "createDuel (Free tier) \u2014 success",
+        "joinDuel from a second wallet \u2014 success",
+        "revealDeck \u2014 success; contract recomputed the commitment",
+        "recordSwipe x2 \u2014 both players signed EIP-712 off-chain, relayer paid gas",
+        "settleCard x3 \u2014 success",
+        "finalize \u2014 success"
+      ],
+      "result": {
+        "status": "Complete",
+        "settled": "3/3",
+        "p0Score": "600000",
+        "p1Score": "-400000",
+        "note": "Scores match the economics exactly: backing UP at 0.40 and winning redeems 1.00 for +0.60; the losing side forfeits its 0.40 premium."
+      },
+      "proves": "Neither player sent a transaction \u2014 the relayer submitted both swipes. That is the core UX claim of the Somnia migration, verified on chain."
     }
   },
   "gasNotes": {
     "deployEstimateVsActual": "Foundry estimated 3,394,836 gas; the deploy actually needed 38,853,709 (11x). Somnia prices contract-code state creation far above Ethereum.",
-    "failureMode": "An under-limit deploy mines with status 0 and burns the ENTIRE limit, while eth_call simulation still succeeds — so simulation cannot catch it. Three deploys failed this way (3.4M, 12M, 8M) before 60M succeeded.",
+    "failureMode": "An under-limit deploy mines with status 0 and burns the ENTIRE limit, while eth_call simulation still succeeds \u2014 so simulation cannot catch it. Three deploys failed this way (3.4M, 12M, 8M) before 60M succeeded.",
     "guidance": "Set a deploy gas limit far above the estimate. Unused gas is refunded on success, so over-provisioning is cheap and under-provisioning is not."
   }
 }
