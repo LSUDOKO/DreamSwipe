@@ -1,0 +1,48 @@
+{
+  "network": "somnia-shannon-testnet",
+  "chainId": 50312,
+  "rpcUrl": "https://dream-rpc.somnia.network",
+  "explorerUrl": "https://shannon-explorer.somnia.network",
+  "nativeToken": "STT",
+  "collateral": {
+    "symbol": "tUSDC",
+    "address": "0x70a86D8842FB63C4Ad2b7cdddF530eBf1BB25d8E",
+    "decimals": 6,
+    "note": "Testnet collateral is tUSDC at 6 decimals. USDso (18 decimals) is MAINNET ONLY. Derive scale from decimals(), never a literal."
+  },
+  "contracts": {
+    "DreamSwipeDuel": {
+      "address": "0x6b554BaFC2031b72AeB100cDAd111c2f70f2cC5c",
+      "deployTx": "0xd35fee418d1a12ca93c4e55136a9aaa9613264a8e1425cc6a57cb49809b7809b",
+      "blockNumber": 483885846,
+      "deployer": "0xF9Aede8C5097F8eb2A96853A51ED7A50C447316d",
+      "keeper": "0xF9Aede8C5097F8eb2A96853A51ED7A50C447316d",
+      "admin": "0xF9Aede8C5097F8eb2A96853A51ED7A50C447316d",
+      "gasUsed": 38853709,
+      "deployedAtUnix": 1788961756
+    }
+  },
+  "verification": {
+    "readsConfirmed": [
+      "keeper()",
+      "admin()",
+      "MIN_DECK_SIZE() = 3",
+      "MAX_DECK_SIZE() = 5",
+      "REVEAL_TIMEOUT_SEC() = 300",
+      "DUEL_TIMEOUT_SEC() = 7200",
+      "swipeDigest(...) returns a valid EIP-712 digest"
+    ],
+    "liveDuel": {
+      "duelId": "0x78c5a9cd9fd97903708636f59c6d40de241e774d2636078de0b770ef356e1465",
+      "createTx": "0x02fe3b5ac745a3302af5505da958876589f04e566b5e7e6b5513f2f367bccc4c",
+      "tier": "Free",
+      "status": "Pending",
+      "note": "Created on live Shannon testnet to prove the state machine end to end."
+    }
+  },
+  "gasNotes": {
+    "deployEstimateVsActual": "Foundry estimated 3,394,836 gas; the deploy actually needed 38,853,709 (11x). Somnia prices contract-code state creation far above Ethereum.",
+    "failureMode": "An under-limit deploy mines with status 0 and burns the ENTIRE limit, while eth_call simulation still succeeds — so simulation cannot catch it. Three deploys failed this way (3.4M, 12M, 8M) before 60M succeeded.",
+    "guidance": "Set a deploy gas limit far above the estimate. Unused gas is refunded on success, so over-provisioning is cheap and under-provisioning is not."
+  }
+}
