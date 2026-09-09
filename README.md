@@ -4,7 +4,11 @@
 > and on-chain escrow pays whoever read the market better.
 > A PvP prediction duel on **Somnia**, powered by **DreamDEX Event Contracts**.
 
-**Live on Somnia Shannon testnet (chain 50312).**
+**Live:** <https://dreamswipe.vercel.app> · API <https://dreamswipe-server.onrender.com/health>
+**Chain:** Somnia Shannon testnet (50312)
+
+> The API runs on Render's free tier and sleeps when idle — the first request
+> after a nap takes ~30s to wake. Reload once if the lobby looks empty.
 
 | | |
 | --- | --- |

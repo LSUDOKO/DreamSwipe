@@ -101,5 +101,32 @@
     "failureMode": "An under-limit deploy mines with status 0 and burns the ENTIRE limit, while eth_call simulation still succeeds \u2014 so simulation cannot catch it. Three deploys failed this way (3.4M, 12M, 8M) before 60M succeeded.",
     "guidance": "Set a deploy gas limit far above the estimate. Unused gas is refunded on success, so over-provisioning is cheap and under-provisioning is not.",
     "sizeScaling": "Gas tracks contract code size closely: 11,440-byte runtime needed 38.85M, 4,401-byte runtime needed 15.57M. Note the gas LIMIT is also balance-checked upfront (limit x gasPrice must be affordable), so an over-large limit can be rejected as 'insufficient balance' even when the tx would only spend a fraction of it."
+  },
+  "hosting": {
+    "web": {
+      "provider": "Vercel",
+      "url": "https://dreamswipe.vercel.app",
+      "note": "Static SPA. vercel.json rewrites every path to index.html \u2014 without that, deep links and refreshes 404 (verified: /game/bot-arena returned 404 before the rewrite was added)."
+    },
+    "server": {
+      "provider": "Render",
+      "url": "https://dreamswipe-server.onrender.com",
+      "serviceId": "srv-dagp2p95efls7380tecg",
+      "healthCheck": "/health",
+      "database": {
+        "provider": "Render Postgres",
+        "id": "dpg-dagp5gdbedkc739m34bg-a",
+        "plan": "free"
+      },
+      "note": "Free tier sleeps after inactivity; the first request after a sleep takes ~30s to wake. Secrets (KEEPER_PRIVATE_KEY, RELAYER_PRIVATE_KEY, DATABASE_URL) are set in Render's env, never committed."
+    },
+    "verifiedLive": [
+      "web: /, /game/bot-arena, /game/practice, /game/rank, /game/duel/<id> all 200",
+      "server /health: ok true, keeper enabled, relayer enabled",
+      "server /bot-arena/deck: 5 live cards from real Somnia markets",
+      "browser end-to-end: Bot Arena dealt a live deck from Vercel -> Render -> Somnia",
+      "relayer reads real chain state (rejected a stale nonce with 'chain expects 2')",
+      "leaderboard returns [] rather than 500 \u2014 database connected"
+    ]
   }
 }
