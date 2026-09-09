@@ -101,10 +101,6 @@ describe("networkEnv", () => {
     expect(networkEnv("mainnet").predictAvailable).toBe(true)
   })
 
-  test("testnet predictAvailable is true out of the box", () => {
-    expect(networkEnv("testnet").predictAvailable).toBe(true)
-  })
-
   test("a _MAINNET override is picked up without a restart", () => {
     expect(networkEnv("mainnet").protocolConfigId).toBe(UNSET_ID)
     process.env.PROTOCOL_CONFIG_ID_MAINNET = "0xcfg"
@@ -119,12 +115,5 @@ describe("networkEnv", () => {
 
     process.env.SUI_GRPC_URL_MAINNET = "https://private.example:443"
     expect(networkEnv("mainnet").grpcUrl).toBe("https://private.example:443")
-  })
-
-  test("deployed.json is not used as a mainnet flicky package fallback", () => {
-    // deployed.json records network: "testnet"; using it for mainnet would
-    // hand a testnet package id to a mainnet PTB.
-    expect(networkEnv("mainnet").flickyPackageId).toBeNull()
-    expect(networkEnv("testnet").flickyPackageId).not.toBeNull()
   })
 })

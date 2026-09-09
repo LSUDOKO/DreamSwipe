@@ -20,6 +20,17 @@
       "admin": "0xF9Aede8C5097F8eb2A96853A51ED7A50C447316d",
       "gasUsed": 38853709,
       "deployedAtUnix": 1788961756
+    },
+    "SeasonPrizePool": {
+      "address": "0xB380814066dcb5d0b4d4968742bFdC005D1FB4a7",
+      "deployTx": "0xd0b86f9de4558a10121941013158114d0687517598db9617082563b9575c140f",
+      "blockNumber": 483959460,
+      "deployer": "0xF9Aede8C5097F8eb2A96853A51ED7A50C447316d",
+      "owner": "0xF9Aede8C5097F8eb2A96853A51ED7A50C447316d",
+      "operator": "0xF9Aede8C5097F8eb2A96853A51ED7A50C447316d",
+      "gasUsed": 15573469,
+      "runtimeBytes": 4401,
+      "note": "Escrows a season prize pool. Allocations freeze at finalize(); each winner claims once; surplus withdrawal is bounded by funded - allocated so an unclaimed prize can never be swept."
     }
   },
   "verification": {
@@ -63,6 +74,7 @@
   "gasNotes": {
     "deployEstimateVsActual": "Foundry estimated 3,394,836 gas; the deploy actually needed 38,853,709 (11x). Somnia prices contract-code state creation far above Ethereum.",
     "failureMode": "An under-limit deploy mines with status 0 and burns the ENTIRE limit, while eth_call simulation still succeeds \u2014 so simulation cannot catch it. Three deploys failed this way (3.4M, 12M, 8M) before 60M succeeded.",
-    "guidance": "Set a deploy gas limit far above the estimate. Unused gas is refunded on success, so over-provisioning is cheap and under-provisioning is not."
+    "guidance": "Set a deploy gas limit far above the estimate. Unused gas is refunded on success, so over-provisioning is cheap and under-provisioning is not.",
+    "sizeScaling": "Gas tracks contract code size closely: 11,440-byte runtime needed 38.85M, 4,401-byte runtime needed 15.57M. Note the gas LIMIT is also balance-checked upfront (limit x gasPrice must be affordable), so an over-large limit can be rejected as 'insufficient balance' even when the tx would only spend a fraction of it."
   }
 }

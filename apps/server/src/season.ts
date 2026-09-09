@@ -3,9 +3,14 @@
  * display. Static (env-driven). The per-player staked-duel count + prize
  * eligibility ride on `/leaderboard` (they need the duel mirror).
  *
- * DISPLAY-ONLY: payout is manual ops at season end — there is no escrow
- * contract. The pool total is DERIVED from the split so the headline number
- * and per-rank breakdown can't drift.
+ * The prize pool is now ESCROWED on chain (`SeasonPrizePool.sol`), so this
+ * endpoint reports the escrow address and the derived split; the authoritative
+ * numbers — what is funded, what is allocated, what a given player can claim —
+ * are read from the contract by the client, not from here. A server-reported
+ * "claimable" would be a promise; the contract's is the fact.
+ *
+ * The headline total is DERIVED from the split so the top-line number and the
+ * per-rank breakdown cannot drift apart.
  */
 import { env } from "./env"
 import { json } from "./lib/http"
@@ -32,10 +37,16 @@ export function handleSeasonRequest(req: Request, url: URL): Response | null {
       prizeSplit: env.seasonPrizeSplit,
       minStakedDuels: env.seasonMinStakedDuels,
       eligibilityNote: env.seasonEligibilityNote,
-      // On-chain prize escrow, present once the season package is published
-      // (and its pool created). Lets the UI show funds are escrowed on-chain.
-      escrow: env.seasonPackageId
-        ? { packageId: env.seasonPackageId, poolId: env.seasonPoolId ?? null }
+      // On-chain prize escrow. Present once SEASON_POOL_ADDRESS is set, which
+      // is what lets the UI show that prizes are escrowed rather than promised.
+      // Balances and per-player allocations are deliberately NOT mirrored here
+      // — the client reads them from the contract.
+      escrow: process.env.SEASON_POOL_ADDRESS
+        ? {
+            address: process.env.SEASON_POOL_ADDRESS,
+            chainId: 50312,
+            explorer: `https://shannon-explorer.somnia.network/address/${process.env.SEASON_POOL_ADDRESS}`,
+          }
         : null,
     },
   })

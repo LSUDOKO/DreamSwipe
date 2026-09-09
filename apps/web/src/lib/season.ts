@@ -1,6 +1,10 @@
 /**
- * Season 0 leaderboard-prize config from the server's `GET /season`.
- * Display-only — payout is manual ops at season end (no escrow contract).
+ * Season leaderboard-prize CONFIG from the server's `GET /season`.
+ *
+ * Display half only: name, end date, prize split, eligibility. The prize pool
+ * is now escrowed on chain, and what a wallet can actually claim is read from
+ * the contract in `./season-pool.ts` — never from here. A server-reported
+ * claimable would be a promise; the contract's is the fact.
  */
 import { CONFIG, apiUrl } from "./config"
 

@@ -16,6 +16,7 @@ import {
 import { fmtCountdown } from "@/lib/countdown"
 import { useNow } from "@/lib/use-now"
 import { playSfx } from "@/lib/sound"
+import { SeasonClaim } from "@/components/season-claim"
 
 /** Wire shape from GET /leaderboard (top players by MMR rating). */
 interface RankEntry {
@@ -143,6 +144,10 @@ export default function GameRank() {
       </header>
 
       {me && myRankInfo && <MyRankCard info={myRankInfo} season={season} />}
+
+      {/* On-chain prize claim. Renders only when this wallet actually has an
+          allocation in the escrow — see SeasonClaim. */}
+      {season && <SeasonClaim seasonLabel={season.id} />}
 
       {season && <PrizePanel season={season} />}
 

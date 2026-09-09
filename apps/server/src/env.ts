@@ -313,7 +313,7 @@ export const env = {
   seasonName: process.env.SEASON_NAME ?? "Season 1",
   // ISO instant the season ends; the web renders a live countdown to it.
   seasonEndsAt: process.env.SEASON_ENDS_AT ?? "2026-07-31T23:59:59Z",
-  seasonPrizeCurrency: process.env.SEASON_PRIZE_CURRENCY ?? "SUI",
+  seasonPrizeCurrency: process.env.SEASON_PRIZE_CURRENCY ?? "tUSDC",
   seasonPrizeSplit: loadSeasonPrizeSplit(),
   // Min completed STAKED duels a player needs to be prize-ELIGIBLE (a cheap
   // sybil / free-duel-farming guard — prizes are real SUI, so a winner must
@@ -323,9 +323,10 @@ export const env = {
   seasonMinStakedDuels: Number(process.env.SEASON_MIN_STAKED_DUELS ?? 1),
   seasonEligibilityNote:
     process.env.SEASON_ELIGIBILITY_NOTE ?? "Final prizes at team discretion.",
-  // NOTE: the on-chain prize escrow ids (seasonPackageId / seasonPoolId /
-  // seasonAdminCapId) are chain-scoped and now live in ./network-env.ts —
-  // they arrive here via the spread above.
+  // On-chain prize escrow (SeasonPrizePool.sol). Unset means "no escrow
+  // configured", and the /season endpoint reports `escrow: null` rather than
+  // implying prizes are secured when they are not.
+  seasonPoolAddress: process.env.SEASON_POOL_ADDRESS ?? "",
 
   // Keeper (background settle/redeem/finalize).
   keeperPollIntervalMs: Number(process.env.KEEPER_POLL_INTERVAL_MS ?? 10_000),

@@ -16,7 +16,8 @@
     "season:results": "bun run src/scripts/season-results.ts",
     "check:sources": "bun run src/scripts/check-sources.ts",
     "check:dreamdex": "bun run src/scripts/check-dreamdex.ts",
-    "e2e:somnia": "bun run src/scripts/e2e-somnia.ts"
+    "e2e:somnia": "bun run src/scripts/e2e-somnia.ts",
+    "e2e:season": "bun run src/scripts/e2e-season.ts"
   },
   "dependencies": {
     "@workspace/dreamdex": "workspace:*",
