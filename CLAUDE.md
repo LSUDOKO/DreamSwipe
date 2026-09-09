@@ -1,65 +1,114 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+Guidance for Claude Code when working in this repository.
 
 ## Project
 
-Flicky is a Tinder-style PvP prediction-duel built on Sui + DeepBook Predict. Two players swipe YES/NO through a 5-card binary-digital deck; a Move `Duel` shared object escrows stakes and pays the winner. See `README.md` for full game design, scoring rules, and Predict touchpoints — that file is authoritative for protocol-level decisions.
+DreamSwipe is a Tinder-style PvP prediction duel on **Somnia** (Shannon
+testnet, chain **50312**) built on **DreamDEX Event Contracts**. Two players
+swipe YES/NO through a 3–5 card deck of live binary markets; a Solidity
+`DreamSwipeDuel` contract escrows stakes and pays the winner.
+
+It began as Flicky (Sui + DeepBook Predict). `docs/MIGRATION_AUDIT.md` records
+what was reused versus replaced, and is the reference for why the codebase
+looks the way it does.
 
 ## Stack
 
-Bun workspaces + Turborepo monorepo.
+Bun workspaces + Turborepo.
 
-- `apps/web` — Vite + React 19 + Tailwind v4 + shadcn/ui. Swipe UI, lockup view.
-- `apps/server` — Bun runtime (`Bun.serve`). WebSocket relay, settled-redeem keeper, sponsored-gas service, Deckmaster (seed-based deck engine, no LLM), ranked MMR + leaderboard, avatar service. No infra deps beyond the `@mysten/*` SDK family — uses `Bun.*` APIs directly (including `Bun.sql` for Postgres, no ORM).
-- `packages/ui` (`@workspace/ui`) — shared shadcn components, hooks, lib utils, and `globals.css`.
-- `apps/contracts` — Move package for the `Duel` object, escrow, scoring, plus standalone `season` (prize-pool escrow) and `swap` (AMM) side-packages, and TS deploy/upgrade/codegen scripts.
+- `apps/web` — Vite + React 19 + Tailwind v4 + shadcn/ui + **wagmi/viem**.
+- `apps/server` — Bun runtime. WS relay, matchmaking, deckmaster, **relayer**,
+  **Somnia keeper**, Bot Arena API, MMR + leaderboard. Uses `Bun.*` directly
+  (including `Bun.sql`, no ORM).
+- `apps/contracts-evm` — Foundry. `DreamSwipeDuel.sol`, solc 0.8.24,
+  `evm_version = cancun`.
+- `packages/dreamdex` — the venue boundary: types, CLOB math, Bot Arena agents,
+  and the Somnia adapter.
+- `packages/ui` — shared shadcn components and `globals.css`.
 
 ## Commands
 
-Always use `bun` (≥ 1.3), never `npm`/`pnpm`/`yarn`. Workspace is `packageManager: bun@1.3.9`.
+Always `bun` (≥ 1.3), never npm/pnpm/yarn.
 
 ```bash
-bun install                  # install all workspaces
-bun dev                      # turbo dev — runs web + server in parallel
-bun --filter web dev         # web only (Vite, default :5173)
-bun --filter server dev      # server only (Bun --hot, default :3001)
+bun install
+bun dev                       # web + server
+bun typecheck                 # 6 packages
+bun run test                  # turbo test (raw `bun test` wanders into vendored clones)
+bun build
 
-bun typecheck                # turbo typecheck (tsc --noEmit per workspace)
-bun lint                     # turbo lint (eslint per workspace)
-bun format                   # prettier write
-bun build                    # turbo build
+bun --filter server run check:dreamdex   # live venue health check, no key needed
+bun --filter server run e2e:somnia       # full lifecycle on live testnet (needs a funded key)
 ```
 
-No test runner is wired up yet.
-
-## Adding shadcn components
-
-Components live in `packages/ui/src/components` and are imported via `@workspace/ui/components/<name>`. To add one:
+**Foundry:** `forge` on this machine is shadowed by an unrelated CLI of the same
+name. Use `~/.config/.foundry/bin/forge`.
 
 ```bash
-bunx --bun shadcn@latest add <component> -c apps/web
+cd apps/contracts-evm
+git clone --depth 1 https://github.com/foundry-rs/forge-std lib/forge-std
+git clone --depth 1 -b v5.1.0 https://github.com/OpenZeppelin/openzeppelin-contracts lib/openzeppelin-contracts
+forge test
 ```
 
-The shadcn CLI is configured in `apps/web/components.json` to install into the shared `@workspace/ui` package (not into the web app's local `src/components`), and to use the shared `packages/ui/src/styles/globals.css` Tailwind stylesheet. The `radix-luma` style and `neutral` base color are fixed — don't change them ad hoc.
+## Load-bearing constraints
 
-Web-app-local components go in `apps/web/src/components` and are imported via the `@/components/...` alias (configured in `apps/web/vite.config.ts`).
+These are not stylistic. Each one is here because getting it wrong fails
+silently.
 
-## Architectural constraints from README
+- **Never hardcode collateral decimals.** Shannon testnet is **tUSDC at 6
+  decimals**; mainnet USDso is 18. The two differ by 10¹² and *nothing reverts*
+  to tell you. Read `decimals()` or use the market's own `collateralDecimals`.
+- **Price = probability in millionths**, always quoted in UP/YES terms. A DOWN
+  price is `ONE − up`. The single conversion point is `toUpPrice`.
+- **Only `packages/dreamdex` may import the venue SDK.** The web app imports
+  the package root (browser-safe); server-only code imports
+  `@workspace/dreamdex/adapter`, which pulls in `node:*` and the SDK.
+- **Discovery must not depend on the indexer.** Markets are found by scanning
+  `MarketCreated` logs on chain. This repo already lost ~12 days to a
+  third-party read API being torn down.
+- **Never fabricate venue data.** Anything underivable returns `null`, never
+  `0`. No synthesized tx hashes, order ids, fills or prices — throw
+  `VenueUnavailableError` instead. `getFills` throws rather than returning `[]`,
+  because an empty array cannot be distinguished from "not implemented".
+- **Free and Staked tiers share one code path.** The tier gates only whether
+  collateral moves. A Free duel carrying a stake reverts on chain.
+- **Deck size is `clamp(eligible, 3, 5)` and never padded.** Below 3 eligible
+  markets the card source throws — two cards on the same market would show the
+  same question twice and settle identically.
+- **Swipes are EIP-712 signatures, not transactions.** The player signs; the
+  relayer submits and pays. The signature binds
+  `(duelId, cardIdx, direction, nonce, deadline)`, so the relayer can neither
+  forge nor replay one, and cannot touch escrow.
+- **`premium`/`filled` are derived server-side from the live venue**, never
+  taken from the request body — a client-supplied premium would let a player
+  understate their entry cost and inflate their own PnL.
+- **Bot fairness is structural.** `PredictionContext` has no outcome field, so
+  an agent cannot cheat even in principle. A test pins its exact key set.
 
-These are load-bearing design decisions — preserve them when implementing:
+## Somnia gas
 
-- **Player-signed swipe PTBs are atomic.** Each swipe is a single PTB that mints on the player's own Predict account and calls `duel::record_swipe` on the shared `Duel` in the same transaction. Forced by Predict's requirement that the sender own the account being minted from — don't try to route mint through the keeper.
-- **`Duel` shared object does NOT hold Predict positions.** Each player owns their own Predict account (an `AccountWrapper`, commonly called their "manager"); the `Duel` escrows the dUSDC side-pot and records swipes (direction + the mint's `order_id`, for anti-replay). Settlement reads scores from `record_swipe` data plus keeper-supplied settlement data, not from positions.
-- **Two tiers share one engine.** Free/Social tier runs the exact same swipe + lockup + settlement flow as Staked, only with the Predict mint and the dUSDC stake removed. Don't fork the code paths — gate the money flow, keep the engine.
-- **Sponsored gas end-to-end.** Player zkLogin wallets only ever hold dUSDC. Any new PTB the player signs (create_duel, join_duel, per-swipe, settle) must go through the sponsored-gas service in `apps/server`.
-- **Commit-reveal deck.** Cards are hashed at duel creation, revealed at match start. Don't expose the unrevealed deck through the WebSocket relay or anywhere else before reveal time.
-- **One app, two networks — but mainnet is a gated preview.** Testnet is the default; the settings menu (gear → menu) has a network picker that persists the choice and reloads (`apps/web/src/lib/network.ts`). DeepBook Predict is testnet-only, so on mainnet every Predict-dependent surface is gated: the duel routes render `<NetworkGate />`, and the server answers `503 network_unavailable`. Env convention is `FOO` (testnet) / `FOO_MAINNET` (mainnet) on both sides — **mainnet never falls back to a testnet value**, and an empty string counts as unset (a `.env` placeholder inlines as `""`, which `??` would happily accept). `DUELS_ENABLED` is derived from whether the ids actually resolve, so filling in the vars is the whole switch. One server process serves both networks (`networkEnv(net)`, `getSuiClient(net)`, `?network=` on reads); the keeper, indexer, and matchmaking queues still run on the default network only. See `docs/network-switching.md`.
-- **Settlement is keeper-fed, not Move-read.** Flicky is pinned to `predict-testnet-8-21`. `settle_card` takes the settlement price and both players' premiums as keeper-supplied arguments: settlement is read from the market object and premiums are mirrored from `OrderMinted` events. Scoring is `card_pnl = payout − premium`, summed per player across the deck — there's no on-chain probability snapshot and no speed multiplier. This pin has moved before (`4-16` → `6-24` → `8-21`); verify upstream ABI and deployment manifests before assuming a local bug.
+State creation is priced far above Ethereum, and the failure mode is nasty: an
+under-limit transaction **mines with `status: 0` and burns the entire limit**,
+while `eth_call` simulation still succeeds — so simulation cannot catch it.
+
+The `DreamSwipeDuel` deploy needed **38.8M gas against a 3.4M estimate (11×)**.
+Always estimate or over-provision; unused gas is refunded on success.
 
 ## Code style
 
-- Prettier: no semicolons, double quotes, 2-space, trailing comma `es5`, print width 80. Tailwind plugin runs `cn` / `cva` through class-sorting and uses `packages/ui/src/styles/globals.css` as the source.
-- TypeScript `strict: true` everywhere; `moduleResolution: bundler`, `target: ES2022`.
-- Server is ESM (`"type": "module"`) and runs directly via `bun --hot src/index.ts` — no bundling in dev. Prefer `Bun.*` APIs over Node shims.
-- ESLint configs are per-workspace flat configs. `packages/ui` intentionally omits `eslint-plugin-react-refresh` (it's a library, not a Vite app) — don't add it back when wiring new shadcn components, because most shadcn files export variants alongside the component and would trip `react-refresh/only-export-components`.
+- Prettier: no semicolons, double quotes, 2-space, trailing comma `es5`, width
+  80. Tailwind plugin sorts classes.
+- TypeScript `strict: true`, `moduleResolution: bundler`, `target: ES2022`.
+- **`erasableSyntaxOnly` is on.** No TS `enum`s and no constructor parameter
+  properties — use `const` objects with a matching type, and explicit fields.
+- Server is ESM and runs via `bun --hot src/index.ts`. Prefer `Bun.*` APIs.
+- `packages/ui` omits `eslint-plugin-react-refresh` on purpose (it is a
+  library) — don't add it back.
+
+## Secrets
+
+Never commit a key. `.env` is gitignored; `.env.example` documents every var.
+The relayer and keeper read `RELAYER_PRIVATE_KEY` / `KEEPER_PRIVATE_KEY` and
+no-op cleanly when unset, so a read-only deployment boots fine.
