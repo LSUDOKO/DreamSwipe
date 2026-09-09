@@ -8,7 +8,13 @@
     "symbol": "tUSDC",
     "address": "0x70a86D8842FB63C4Ad2b7cdddF530eBf1BB25d8E",
     "decimals": 6,
-    "note": "Testnet collateral is tUSDC at 6 decimals. USDso (18 decimals) is MAINNET ONLY. Derive scale from decimals(), never a literal."
+    "note": "Testnet collateral is tUSDC at 6 decimals. USDso (18 decimals) is MAINNET ONLY. Derive scale from decimals(), never a literal.",
+    "faucet": {
+      "onChain": true,
+      "function": "faucet(uint256)",
+      "note": "tUSDC exposes a permissionless on-chain faucet \u2014 no Telegram step is needed for collateral. Verified: drew 5,000 tUSDC in one call. STT for gas still comes from the SomniaHacks group.",
+      "gasWarning": "estimateGas reported 1,379,707 but the call actually used 253,138 \u2014 and a 500,000 limit still mined with status 0 and burned the whole limit. Somnia's estimate is unreliable in BOTH directions; over-provision."
+    }
   },
   "contracts": {
     "DreamSwipeDuel": {
@@ -69,6 +75,25 @@
         "note": "Scores match the economics exactly: backing UP at 0.40 and winning redeems 1.00 for +0.60; the losing side forfeits its 0.40 premium."
       },
       "proves": "Neither player sent a transaction \u2014 the relayer submitted both swipes. That is the core UX claim of the Somnia migration, verified on chain."
+    },
+    "stakedDuel": {
+      "verifiedAt": "2026-09-09",
+      "duelId": "0x8646cc5be5e408c2",
+      "stakePerSide": "5000000",
+      "steps": [
+        "faucet(5000 tUSDC) -> creator funded on chain",
+        "approve x2, createDuel(STAKED) -> escrow holds 1 stake (5000000)",
+        "joinDuel -> escrow holds both stakes (10000000)",
+        "revealDeck, 2x relayed EIP-712 swipe, settleCard x3, finalize"
+      ],
+      "result": {
+        "p0Score": "600000",
+        "p1Score": "-400000",
+        "p0Net": "+5000000",
+        "p1Net": "-5000000",
+        "escrowRemaining": "0"
+      },
+      "proves": "Real collateral is escrowed and paid out: the winner nets exactly one stake, the loser forfeits exactly one, and the escrow returns to zero with nothing stranded."
     }
   },
   "gasNotes": {

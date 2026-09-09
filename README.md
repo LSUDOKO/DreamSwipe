@@ -46,6 +46,11 @@ winning redeems 1.00 (+0.60); the loser forfeits their 0.40 premium.
 **Neither player sent a transaction.** Both signed EIP-712 messages and the
 relayer submitted them. No wallet popup mid-duel, no gas from the player.
 
+**Staked duels are verified with real collateral**
+(`bun --filter server run e2e:staked`): 5 tUSDC escrowed per side, 10 held in
+escrow, the winner paid the whole pot, and the escrow back to exactly 0 with
+nothing stranded.
+
 The season prize pool is verified the same way
 (`bun --filter server run e2e:season`): create → fund → allocate → finalize →
 claim, with the claim sent **by the winner**, `claimable` correctly 0 before
@@ -134,8 +139,9 @@ cp .env.example .env        # add a funded Shannon key for writes
 bun dev                     # web :5173 + server :3001
 ```
 
-Testnet STT (gas) and tUSDC (collateral) come from the SomniaHacks faucet:
-<https://t.me/+XHq0F0JXMyhmMzM0>
+**tUSDC has a permissionless on-chain faucet** — call `faucet(uint256)` on the
+token; no external step is needed for collateral. STT for gas comes from the
+SomniaHacks group: <https://t.me/+XHq0F0JXMyhmMzM0>
 
 ```bash
 bun typecheck   # 4/4 packages
