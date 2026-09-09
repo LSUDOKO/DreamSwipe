@@ -8,6 +8,7 @@
 export * from "./types"
 export * from "./book-math"
 export * from "./market-cache"
+export * from "./agents"
 export {
   SomniaDreamDexAdapter,
   SHANNON_CHAIN_ID,

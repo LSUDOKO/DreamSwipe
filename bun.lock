@@ -55,6 +55,7 @@
         "@mysten-incubation/sponsor": "0.2.2",
         "@mysten/sui": "2.20.3",
         "@mysten/wallet-sdk": "^0.8.1",
+        "@workspace/dreamdex": "workspace:*",
       },
       "devDependencies": {
         "@eslint/js": "^9.39.2",
