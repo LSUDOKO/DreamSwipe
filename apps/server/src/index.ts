@@ -135,6 +135,17 @@ async function safeListCursors(): Promise<unknown> {
 const server = Bun.serve({
   port: env.port,
 
+  // Bun.serve defaults to a 10s idleTimeout, which silently killed the FIRST
+  // request to /bot-arena/deck after every restart: a cold market-discovery
+  // sweep is a multi-hundred-request `getLogs` scan against the public Somnia
+  // RPC and was measured at ~17s (warm, from cache, it is ~1.5s). The client
+  // saw an empty response with no error anywhere, which is the worst possible
+  // way to fail.
+  //
+  // 60s leaves headroom for a cold scan on a slow RPC while still bounding a
+  // genuinely stuck request.
+  idleTimeout: 60,
+
   async fetch(req, server) {
     const url = new URL(req.url)
 
@@ -298,13 +309,52 @@ if (!env.flickyPackageId) {
 // Create the Postgres schema up front so a bad DATABASE_URL surfaces in
 // the logs at boot rather than on the first duel. Non-fatal: the HTTP/WS
 // layer still answers (and /health reports the DB state) if this fails.
-void ready()
-  .then(() => log.info("postgres schema ready"))
-  .catch((e) =>
+// NOTE: `ready()` can throw SYNCHRONOUSLY (getSql() validates DATABASE_URL
+// before any await), in which case a trailing `.catch()` never runs and the
+// throw escapes to module scope — killing the process at boot. That defeated
+// the "non-fatal" intent entirely: an unset or briefly-bad DATABASE_URL took
+// the whole server down instead of degrading to DB-less operation.
+//
+// Wrapping in an async IIFE turns the sync throw into a rejection the catch
+// can actually see. The venue endpoints (/bot-arena/deck, /relay/swipe) and
+// the WS layer need no database, so they stay up either way.
+// `ready()` memoizes its promise and ~20 db.ts functions await it. When the DB
+// is unreachable, whichever background loop touches it first leaves a rejected
+// memoized promise that no one else subscribes to, and Bun treats that orphan
+// as an unhandled rejection and EXITS — even though the boot path below caught
+// its own copy. The result was that an unset DATABASE_URL killed a server whose
+// venue endpoints (/bot-arena/deck, /relay/swipe) and WS layer need no database
+// at all.
+//
+// Rather than audit every caller, DB-origin rejections are absorbed here and
+// logged once. Anything else keeps the default fatal behaviour, so this does
+// not become a blanket "ignore all errors".
+let dbFailureLogged = false
+process.on("unhandledRejection", (reason) => {
+  const message = reason instanceof Error ? reason.message : String(reason)
+  if (/DATABASE_URL|postgres|ECONNREFUSED/i.test(message)) {
+    if (!dbFailureLogged) {
+      dbFailureLogged = true
+      log.error(`database unavailable, continuing without it: ${message}`)
+    }
+    return
+  }
+  log.error(`unhandled rejection: ${message}`)
+  throw reason
+})
+
+void (async () => {
+  try {
+    await ready()
+    log.info("postgres schema ready")
+  } catch (e) {
     log.error(
-      `postgres init failed: ${e instanceof Error ? e.message : String(e)}`
+      `postgres init failed (continuing without DB): ${
+        e instanceof Error ? e.message : String(e)
+      }`
     )
-  )
+  }
+})()
 
 // The indexer, keeper, oracle stream, and matchmaking queues all run on the
 // DEFAULT network only. HTTP reads are already per-network, but running these

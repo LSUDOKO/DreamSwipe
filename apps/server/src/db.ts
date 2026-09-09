@@ -52,13 +52,32 @@ export function getSql(): SQL {
  */
 export function ready(): Promise<void> {
   if (_ready) return _ready
-  _ready = ensureSchema().catch((e) => {
-    // Reset so a transient failure (DB still booting) can be retried on
-    // the next call rather than poisoning the singleton forever.
+
+  // Two hazards are handled here, and both used to kill the process at boot.
+  //
+  // 1. `ensureSchema()` is async, but its FIRST statement is `getSql()`, which
+  //    throws SYNCHRONOUSLY when DATABASE_URL is unset — so calling it bare
+  //    threw out of `ready()` before any promise existed, and a caller's
+  //    `.catch()` never ran. `Promise.resolve().then(...)` defers it into the
+  //    microtask queue so every failure is a rejection.
+  //
+  // 2. The retry-reset used to be a `.catch(e => { _ready = null; throw e })`.
+  //    That rethrow produced a SECOND rejected promise which nothing awaited —
+  //    the memoized one — and Bun reports that orphan as an unhandled
+  //    rejection and exits, even though the real caller caught its own copy.
+  //    So the reset is done in a side-effect-only handler that does not
+  //    rethrow, and the original promise (with its rejection intact) is what
+  //    callers receive.
+  const attempt = Promise.resolve().then(() => ensureSchema())
+
+  // Detached: resets the memo so a transient failure (DB still booting) can be
+  // retried, without creating an unhandled orphan.
+  void attempt.catch(() => {
     _ready = null
-    throw e
   })
-  return _ready
+
+  _ready = attempt
+  return attempt
 }
 
 async function ensureSchema(): Promise<void> {
