@@ -65,47 +65,64 @@ Somnia is an **EVM** chain. This is the single most consequential fact in the
 migration: the existing chain layer is Sui/Move and cannot be ported, only
 replaced. See §4.
 
-### 2.2 DreamDEX Bot Kit — NOT FOUND on public npm
+### 2.2 DreamDEX — CONFIRMED via official Bot Kit + hackathon starter
 
-The spec pack states the "modern Bot Kit package" is `@dreamdex-bot-kit/core`.
-Queried against the public npm registry during this audit:
+The spec pack's package name is **wrong**, but the venue itself is real and was
+verified end to end during this audit against the official
+`somnia-chain/dreamdex-bot-kit` repo and the official
+`ec-dreamdex-hackathon-template` starter (both supplied in-tree), plus live
+chain reads.
 
-| Package name tried | Registry response |
-| --- | --- |
-| `@dreamdex-bot-kit/core` | **404** |
-| `dreamdex-bot-kit` | **404** |
-| `@dreamdex/bot-kit` | **404** |
-| `@dreamdex/sdk` | **404** |
-| `dreamdex` | **404** |
+| Spec claim | Verdict | Reality |
+| --- | --- | --- |
+| Package `@dreamdex-bot-kit/core` | **CONTRADICTED** | Not on npm (404). It is an unpublished internal workspace name inside the Bot Kit monorepo. |
+| — | **CONFIRMED** | The real installable SDK is **`@somnia-chain/markets-sdk`**, latest **0.29.0**. Installed and exercised during this audit. |
+| USDso, 18 decimals, on testnet | **CONTRADICTED** | Shannon testnet collateral is **tUSDC at 6 decimals** (`0x70a86D8842FB63C4Ad2b7cdddF530eBf1BB25d8E`). USDso is mainnet-only. Confirmed by on-chain read: `getMarketOnchain().decimals === 6`. |
+| Native gas token SOMI | **CONTRADICTED (testnet)** | Testnet gas is **STT**. SOMI is mainnet (chain 5031). |
+| `placeOrder(...)` is current | **CONFIRMED** | `ex.trader.placeOrder({ pool, side, price, quantity, orderType })`. |
+| `Pool` abstraction | **CONFIRMED** | Each market has a `pool` address owning the book and escrow. |
+| Early exit before expiry | **CONFIRMED** | Supported — sell back at the live price while the window is open, limited to inventory held. |
 
-**No DreamDEX SDK is installable from the public npm registry under any of the
-obvious names.** This does not prove the package does not exist — it may be
-published to a private registry, distributed via GitHub, or named differently —
-but it does mean the integration **cannot be built by taking the spec's package
-name on faith.**
+Verified live-market facts (read from Shannon testnet during this audit, **no
+private key required for the entire read path**):
 
-Per Absolute Rule #5 ("do not invent contract methods, market endpoints, order
-APIs...") and Rule #11 ("if an advanced capability is not supported by the live
-venue, implement an honest disabled/unavailable state rather than a fake path"),
-this drives the central architectural decision in §5.
+- **8 live markets** in tUSDC at audit time: BTC and ETH across 5m / 15m / 60m /
+  240m windows.
+- `MarketCreated` carries everything the deck engine needs:
+  `marketId (bytes32)`, `pool`, `yesId`, `noId`, `collateral`, `asset`,
+  `strike`, `tradingStart`, `expiry`, `oracleQuestionId`, `question`,
+  `intervalSec`.
+- `getMarketOnchain(marketId)` returns `status` (1 = Trading), `finalized`,
+  `winningOutcome`, `isResolved`, `isVoided`, `outcomeToken`, `decimals`.
+- A **real order book** is readable: a sample 240m BTC market showed 6 bids /
+  3 asks, best bid `0.756`, best ask `0.782`. Genuine spread, depth and
+  imbalance can therefore be computed — the spec's CLOB-intelligence panel is
+  backed by real data, not a placeholder.
+- **Price = probability in millionths** (`900000` = 0.90); one book quoted in
+  YES/Up terms, so a Down price is `1 − up`.
+- Outcome tokens are **ERC-6909 ids** on a shared `outcomeToken` singleton.
 
-### 2.3 Facts still unverified
+Two integration facts discovered by direct probing that the starter does not
+mention, and which would otherwise cost real debugging time:
 
-The following spec claims could **not** be independently confirmed at audit time
-and must be treated as unverified until a real DreamDEX endpoint is available:
+1. **SDK 0.29.0 blocks the deep import the starter uses.** The starter does
+   `import ... from "@somnia-chain/markets-sdk/dist/eventsAbi.js"`, which now
+   fails with `ERR_PACKAGE_PATH_NOT_EXPORTED` because `exports` only publishes
+   `.`, `./react`, `./chains`, `./reactivity`, `./native`.
+   `marketCreatorEventsAbi` is **not** re-exported from the main entry.
+2. **Market discovery must not depend on the indexer.** Discovery works by
+   scanning `MarketCreated` logs directly (Somnia caps `getLogs` at 1000 blocks
+   per call, so it must walk backwards in windows). This matches the existing
+   `card-source.ts` philosophy of never letting a third-party service become a
+   single point of failure.
 
-- `placeOrder(...)` as the current order entry point, and its exact signature
-- the `Pool` abstraction and its API surface
-- USDso contract address (18 decimals is claimed; the *address* is unknown)
-- Event Contract market discovery endpoint and market ID representation
-- outcome representation and settlement representation
-- whether early exit / sell-before-expiry is supported
-- WebSocket order-book endpoint URL
-- the canonical DreamDEX terminal deep-link URL format
+### 2.3 Still unverified
 
-**These are exactly the fields the spec forbids inventing.** Every one of them
-is confined behind the adapter interface in §5 so that no game code depends on
-a guess.
+- exact DreamDEX terminal deep-link for an *individual* market. The observed
+  pattern `https://app.dreamdex.io/event-contracts/{PAIR}/{INTERVAL}` addresses
+  a *series*, not one window, and is not documented. Treated as unstable.
+- event-contract REST/WebSocket endpoints — the published REST/WS surface is
+  **spot only**; event contracts use GraphQL or on-chain reads.
 
 ---
 
@@ -298,8 +315,12 @@ The migration's true cost is concentrated in the chain layer — Move → Solidi
 Sui SDK → viem/wagmi, sponsored gas → EIP-712 session keys — plus the decimal
 rescale.
 
-The one genuine blocker is that **no DreamDEX SDK or API could be verified from
-public sources at audit time.** Rather than guess at it, the integration is
-built behind the specified adapter interface with capability-gated, honest
-unavailable states, so that nothing in DreamSwipe fabricates venue data and the
-real API can be connected without touching game code.
+There is **no venue blocker**: the DreamDEX read path is verified working against
+live Shannon testnet, including real order books, so CLOB metrics, deck
+selection and settlement can all be driven by genuine data rather than
+placeholders. The spec pack's own DreamDEX constants were wrong in three
+material ways (package name, collateral token, decimals) and are corrected in
+§2.2 — building on them unchecked would have produced a silently mispriced app.
+
+Writes (mint / order / redeem) additionally require a funded Shannon key, which
+is supplied per-deployment via env and never committed.
