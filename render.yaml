@@ -1,0 +1,44 @@
+# Render blueprint for the DreamSwipe server.
+#
+# The server is a single Bun process. It needs no database to serve the game —
+# lobby, Bot Arena, live market data and the WebSocket all work without one, and
+# leaderboard/chat/history degrade to empty rather than failing. See
+# docs/DEPLOYMENT.md.
+services:
+  - type: web
+    name: dreamswipe-server
+    runtime: node
+    plan: free
+    region: oregon
+    branch: main
+    # Bun is not preinstalled on Render's node runtime, so fetch it and use it
+    # to install. `bun install` is used rather than npm because the workspace is
+    # a bun monorepo with a bun.lock.
+    buildCommand: |
+      curl -fsSL https://bun.sh/install | bash
+      export PATH="$HOME/.bun/bin:$PATH"
+      bun install --frozen-lockfile
+    startCommand: |
+      export PATH="$HOME/.bun/bin:$PATH"
+      bun apps/server/src/index.ts
+    healthCheckPath: /health
+    envVars:
+      # Deployed contracts — see deployments/somnia-testnet.json.
+      - key: DREAMSWIPE_DUEL_ADDRESS
+        value: "0x6b554BaFC2031b72AeB100cDAd111c2f70f2cC5c"
+      - key: SEASON_POOL_ADDRESS
+        value: "0xB380814066dcb5d0b4d4968742bFdC005D1FB4a7"
+      - key: SOMNIA_RPC_URL
+        value: "https://dream-rpc.somnia.network"
+      - key: COLLATERAL_TOKEN
+        value: "0x70a86D8842FB63C4Ad2b7cdddF530eBf1BB25d8E"
+      - key: DECK_SOURCE
+        value: "dreamdex"
+      # PORT is injected by Render and read by the server (env.ts); setting it
+      # here would override the value Render actually routes to.
+      # Secrets are set in the dashboard, never here:
+      #   RELAYER_PRIVATE_KEY  — gasless relayed swipes
+      #   KEEPER_PRIVATE_KEY   — card settlement + finalize
+      #   DATABASE_URL         — leaderboard / chat / history
+      # Without them the server still boots and the game is playable; the
+      # corresponding features report themselves disabled on /health.
