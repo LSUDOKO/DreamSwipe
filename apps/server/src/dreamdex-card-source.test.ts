@@ -75,12 +75,29 @@ describe("selectEligibleMarkets", () => {
   })
 
   it("drops markets too far out to resolve during a session", () => {
+    // Beyond MAX_HORIZON_MS (255m). The venue's longest listed window is 240m,
+    // which is deliberately still admitted — see the next test.
     const tooFar = market({
       id: "0xfar",
-      expirySec: Math.floor(NOW / 1000) + 4 * 60 * 60,
-      intervalSec: 14400,
+      expirySec: Math.floor(NOW / 1000) + 6 * 60 * 60,
+      intervalSec: 21600,
     })
     expect(selectEligibleMarkets([tooFar], NOW)).toHaveLength(0)
+  })
+
+  it("still admits the venue's longest (240m) window", () => {
+    // Regression guard for a real playability bug found by `check:dreamdex`
+    // against the live venue: with a 75m horizon, the short windows were often
+    // inside MIN_HEADROOM_MS of expiry, leaving only the two 60m markets
+    // eligible — below the deck floor, so no duel could start at all.
+    // Admitting 240m keeps the floor reachable at the worst point of the
+    // short-window cycle.
+    const long = market({
+      id: "0xlong",
+      expirySec: Math.floor(NOW / 1000) + 240 * 60,
+      intervalSec: 14400,
+    })
+    expect(selectEligibleMarkets([long], NOW)).toHaveLength(1)
   })
 
   it("drops markets that are not accepting orders", () => {

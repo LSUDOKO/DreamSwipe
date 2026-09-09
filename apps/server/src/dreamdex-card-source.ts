@@ -53,10 +53,25 @@ export const MIN_HEADROOM_MS = 90_000
 /**
  * Maximum time to settlement.
  *
- * A duel that cannot resolve for four hours is not a game. Long-dated windows
- * are excluded so a match reaches a result while the players are still there.
+ * A duel whose last card resolves hours from now is not a game, so long-dated
+ * windows are excluded — but this bound is a REAL constraint on playability,
+ * not a free parameter.
+ *
+ * Measured against the live venue: it lists 8 markets across 5m / 15m / 60m /
+ * 240m windows for BTC and ETH. A 75-minute horizon admits only the 5m, 15m
+ * and 60m pairs, and because the short windows roll continuously there are
+ * long stretches where the 5m and 15m markets are inside `MIN_HEADROOM_MS` of
+ * expiry. That leaves just the two 60m markets eligible — below the deck floor
+ * of 3 — and the game refuses to deal. Observed exactly that: "2 eligible
+ * (need >= 3)".
+ *
+ * 4h + slack admits the 240m pair as well, so the floor is reachable from the
+ * long windows alone even at the worst point in the short-window cycle.
+ * Soonest-settling markets are still preferred (`selectEligibleMarkets` sorts
+ * by expiry, and only `MAX_DECK_SIZE` cards are taken), so a long window is
+ * dealt as a backstop rather than a default.
  */
-export const MAX_HORIZON_MS = 75 * 60 * 1000
+export const MAX_HORIZON_MS = 255 * 60 * 1000
 
 /** Themed decks (`specs/00_MASTER_SPEC.md` §Themed decks). */
 export type DeckTheme =
