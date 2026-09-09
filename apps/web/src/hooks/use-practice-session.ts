@@ -18,11 +18,17 @@ import type { Unsubscribe } from "@/hooks/use-flicky-socket"
 import type { RoomState } from "@/lib/room-state"
 import { SWIPE_QUANTITY } from "@/lib/funding"
 
-/** Sentinel opponent address — drives PlayerAvatar's deterministic gradient
- *  and fills the p1 slot of the synthetic RoomState. */
-export const BOT_ADDRESS =
-  "0x0000000000000000000000000000000000000000000000000000000000000b07"
-export const BOT_NAME = "flicky-bot"
+/**
+ * Sentinel opponent address — drives PlayerAvatar's deterministic gradient and
+ * fills the p1 slot of the synthetic RoomState.
+ *
+ * EVM-shaped (20 bytes). The Sui-era 32-byte value rendered as `0x0000…0b07`
+ * and, because the avatar gradient is seeded from the first bytes, produced a
+ * degenerate flat swatch for every practice bot. The non-zero prefix gives it
+ * a real colour while staying obviously synthetic.
+ */
+export const BOT_ADDRESS = "0xB07B07B07B07B07B07B07B07B07B07B07B07B07B"
+export const BOT_NAME = "dreamswipe-bot"
 
 const BOT_REVEAL_MIN_MS = 1_000
 const BOT_REVEAL_MAX_MS = 3_000

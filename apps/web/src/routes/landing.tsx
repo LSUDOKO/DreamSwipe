@@ -1,7 +1,7 @@
 import { useState, type ReactNode } from "react"
 import { Link, useNavigate, type NavigateFunction } from "react-router"
 import { PixelButton } from "@/components/pixel-button"
-import { CONFIG, explorerObjectUrl } from "@/lib/config"
+import { addressUrl, DUEL_ADDRESS } from "@/lib/chain"
 
 /**
  * Public homepage at `/`. A judge opens this first: it has to say "what is
@@ -38,9 +38,12 @@ function enterGameWithCrt(navigate: NavigateFunction) {
   }, CRT_DURATION_MS)
 }
 
-const GITHUB_URL = "https://github.com/nikola0x0/flicky"
-const DEEPBOOK_URL = "https://deepbook.tech"
-const contractUrl = `${explorerObjectUrl(CONFIG.packageId)}/tx-blocks`
+const GITHUB_URL = "https://github.com/LSUDOKO/DreamSwipe"
+const VENUE_URL = "https://app.dreamdex.io/event-contracts"
+// The deployed duel contract on Somnia. This used to point at a Sui explorer
+// object page — a live, clickable, 404-ing link for a chain the app no longer
+// runs on.
+const contractUrl = addressUrl(DUEL_ADDRESS)
 
 // Bevelled pixel panel — hard black outline, top highlight + offset drop,
 // matching the in-game tile treatment.
@@ -89,21 +92,21 @@ function AssetImage({
 function TopBar() {
   return (
     <header className="flex shrink-0 items-center justify-between gap-3 border-b-2 border-black bg-[#151837] px-4 py-2.5 shadow-[0_2px_0_#3a4f8a] sm:px-8 lg:px-12 lg:py-3 2xl:px-20 2xl:py-4">
-      <Link to="/" aria-label="flicky home" className="flex items-center">
+      <Link to="/" aria-label="dreamswipe home" className="flex items-center">
         <AssetImage
           src="/logo-mark.png"
-          alt="flicky"
+          alt="dreamswipe"
           className="h-12 w-auto [image-rendering:pixelated] sm:h-14 lg:h-20 2xl:h-24"
           fallback={
             <span className="text-4xl font-bold [text-shadow:2px_2px_0_#000,4px_4px_0_#00ad45] sm:text-5xl lg:text-6xl 2xl:text-7xl">
-              flicky
+              dreamswipe
             </span>
           }
         />
       </Link>
       <div className="flex items-center gap-3 sm:gap-5 2xl:gap-8">
         <span className="bg-[#0f1430] px-2.5 py-1 text-[10px] tracking-[0.12em] text-[#8fb4ff] uppercase sm:text-xs 2xl:px-4 2xl:py-2 2xl:text-base">
-          Sui {CONFIG.network}
+          Somnia Shannon
         </span>
         <Link
           to="/game/home"
@@ -153,9 +156,9 @@ function Hero() {
           <div className="mt-9 flex flex-wrap gap-3 2xl:mt-12 2xl:gap-4">
             <Badge
               icon="/assets/landing/deepbook.png"
-              label="Powered by DeepBook Predict"
+              label="Powered by DreamDEX Event Contracts"
             />
-            <Badge icon="/tokens/sui.png" label="Built on Sui" />
+            <Badge icon="/tokens/sui.png" label="Built on Somnia" />
           </div>
         </div>
 
@@ -234,7 +237,7 @@ function HeroPreview() {
         // phone frame), so no border, bevel or drop shadow is added here.
         <img
           src="/home/shot-swipe.png"
-          alt="Flicky duel — swiping YES or NO through a deck of market predictions"
+          alt="DreamSwipe duel — swiping YES or NO through a deck of market predictions"
           onError={() => setShotFailed(true)}
           className={`block object-contain ${sizing}`}
         />
@@ -359,15 +362,15 @@ function SiteFooter() {
       <div
         className={`flex flex-col items-center justify-between gap-2 px-5 py-4 text-[11px] text-[#8b93b4] sm:flex-row sm:px-8 sm:text-xs lg:px-12 lg:py-5 2xl:px-20 2xl:py-8 2xl:text-lg ${CONTENT_W}`}
       >
-        <span>flicky · the prediction arena on Sui</span>
+        <span>dreamswipe · the prediction arena on Somnia</span>
         <div className="flex items-center gap-4 lg:gap-6 2xl:gap-10">
           <a
-            href={DEEPBOOK_URL}
+            href={VENUE_URL}
             target="_blank"
             rel="noreferrer"
             className="transition-colors hover:text-white"
           >
-            DeepBook Predict ↗
+            DreamDEX ↗
           </a>
           <a
             href={GITHUB_URL}

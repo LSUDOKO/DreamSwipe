@@ -148,3 +148,32 @@ export function formatCollateral(
 export function formatProbability(price: bigint, fractionDigits = 0): string {
   return `${((Number(price) / 1_000_000) * 100).toFixed(fractionDigits)}%`
 }
+
+/**
+ * Case-insensitive address equality.
+ *
+ * REQUIRED for every address comparison in this app. wagmi returns EIP-55
+ * checksummed addresses (mixed case) while the server stores and returns them
+ * lowercase, so a bare `===` between the two is false for the SAME address.
+ *
+ * That mismatch is not a cosmetic bug: it silently made participants look like
+ * spectators. The result modal never opened, a creator was listed as their own
+ * opponent, and every `myIsP0`-keyed PnL selection was flipped — so a match row
+ * could read "WIN" beside a negative return.
+ */
+export function sameAddress(
+  a: string | null | undefined,
+  b: string | null | undefined
+): boolean {
+  if (!a || !b) return false
+  return a.toLowerCase() === b.toLowerCase()
+}
+
+/**
+ * The EVM zero address (42 chars).
+ *
+ * Named because the Sui-era constant was 66 chars, so `opponent !== ZERO_ADDR`
+ * was always true and a duel with no challenger rendered an opponent row for
+ * 0x0000…0000.
+ */
+export const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000"

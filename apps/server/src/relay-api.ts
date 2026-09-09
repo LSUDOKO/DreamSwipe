@@ -19,6 +19,7 @@
 import { SomniaDreamDexAdapter } from "@workspace/dreamdex/adapter"
 import { ONE_PROBABILITY } from "@workspace/dreamdex"
 import { relaySwipe, validateSwipeRequest } from "./relayer"
+import { trackDuel } from "./somnia-keeper"
 import { makeLogger } from "./log"
 
 const log = makeLogger("relay-api")
@@ -108,6 +109,10 @@ export async function handleRelayRequest(
         premium: (SWIPE_QUANTITY * (ONE_PROBABILITY / 2n)) / ONE_PROBABILITY,
         filled: SWIPE_QUANTITY,
       }
+
+  // First time this process sees the duel, register it so the keeper settles
+  // its cards and the indexer mirrors it. Idempotent — it is a Set.
+  trackDuel(parsed.duelId)
 
   const result = await relaySwipe(parsed, execution)
   if (!result.ok) {

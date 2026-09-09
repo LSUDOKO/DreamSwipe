@@ -12,6 +12,9 @@ import { topLeaderboard } from "./mmr"
 import { playerRank, stakedDuelCounts } from "./db"
 import { env } from "./env"
 import { json, resolveNetworkParam } from "./lib/http"
+import { makeLogger } from "./log"
+
+const log = makeLogger("leaderboard")
 
 export async function handleLeaderboardRequest(
   req: Request,
@@ -47,13 +50,24 @@ export async function handleLeaderboardRequest(
       }),
     })
   } catch (e) {
-    return json(
-      {
-        error: "leaderboard read failed",
-        detail: e instanceof Error ? e.message : String(e),
-      },
-      500
+    // A leaderboard with no database is EMPTY, not broken. Returning 500 left
+    // the rank screen stuck on "loading…" forever, because the client has no
+    // way to distinguish "still fetching" from "the server errored" — which is
+    // exactly what a first-time visitor without Postgres configured would see.
+    //
+    // 200 with an empty board and an explicit `degraded` flag lets the UI
+    // render an honest "no rankings yet" state while still surfacing that
+    // something is misconfigured.
+    log.warn(
+      `leaderboard read failed, serving empty: ${
+        e instanceof Error ? e.message : String(e)
+      }`
     )
+    return json({
+      players: [],
+      degraded: true,
+      detail: e instanceof Error ? e.message : String(e),
+    })
   }
 }
 

@@ -42,7 +42,7 @@ export const TOURS: Record<TourId, TourStep[]> = {
       route: "/game/home",
     },
     {
-      targetId: "balance-manager",
+      targetId: "balance-gas",
       description: "Manager balance funds your duels",
       placement: "bottom",
       route: "/game/home",

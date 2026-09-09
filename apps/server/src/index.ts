@@ -23,6 +23,7 @@ import { env } from "./env"
 import { handleBotArenaRequest } from "./bot-arena-api"
 import { handleRelayRequest } from "./relay-api"
 import { createSomniaKeeper, trackedDuels } from "./somnia-keeper"
+import { createSomniaIndexer } from "./somnia-indexer"
 import { makeLogger } from "./log"
 import { CORS_HEADERS, corsPreflight, json } from "./lib/http"
 import { networkEnv } from "./network-env"
@@ -43,7 +44,9 @@ import { startMatchClock, stopMatchClock } from "./ws/match-clock"
 import {
   marketStreamStats,
   startMarketStream,
+  startSpotStream,
   stopMarketStream,
+  stopSpotStream,
 } from "./ws/market-stream"
 import { closeDb, listCursors, predictMarketStats, ready } from "./db"
 
@@ -144,6 +147,7 @@ const server = Bun.serve({
           duelAddress: process.env.DREAMSWIPE_DUEL_ADDRESS ?? null,
           keeper: somniaKeeper ? somniaKeeper.address : "disabled",
           trackedDuels: trackedDuels().length,
+          indexedDuels: somniaIndexer ? somniaIndexer.trackedCount : 0,
         },
       })
     }
@@ -277,11 +281,22 @@ void (async () => {
 
 startMatchClock()
 startMarketStream()
+startSpotStream()
 startChatPruneLoop()
 
 // Somnia settlement keeper. Reads outcomes from DreamDEX and writes
 // settleCard/finalize on chain. No-ops without DREAMSWIPE_DUEL_ADDRESS +
 // KEEPER_PRIVATE_KEY, so a read-only deployment boots cleanly.
+// Mirrors on-chain duel state into Postgres and pushes room_state. Without it
+// `sendRoomSnapshot` finds no row, so clients sit on AWAIT_REVEAL forever and
+// the keeper is never told which duels exist.
+const somniaIndexer = createSomniaIndexer()
+if (somniaIndexer) {
+  void somniaIndexer.start()
+} else {
+  log.warn("somnia indexer disabled — set DREAMSWIPE_DUEL_ADDRESS")
+}
+
 const somniaKeeper = createSomniaKeeper()
 if (somniaKeeper) {
   somniaKeeper.start()
@@ -301,6 +316,7 @@ async function shutdown(signal: string): Promise<void> {
   log.info(`received ${signal}, shutting down`)
   stopMatchClock()
   stopMarketStream()
+  stopSpotStream()
   try {
     server.stop()
   } catch (e) {

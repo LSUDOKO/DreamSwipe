@@ -12,8 +12,11 @@ import { consume } from "../ratelimit"
 import { handleChatReact, handleChatSend, sendChatHistory } from "./chat"
 import {
   onSocketCloseMarketStream,
+  onSocketCloseSpot,
   subscribeMarkets,
+  subscribeSpot,
   unsubscribeMarkets,
+  unsubscribeSpot,
 } from "./market-stream"
 import { handlePracticeStart } from "./practice"
 import { isValidTier, parseClientMsg, type ServerMsg } from "./protocol"
@@ -260,11 +263,11 @@ export const websocketHandler: WebSocketHandler<SocketState> = {
           })
           return
         }
-        /* no global spot feed on DreamDEX — prices are per-market */
+        subscribeSpot(ws)
         return
       }
       case "spot_unsubscribe": {
-        /* no global spot feed on DreamDEX — prices are per-market */
+        unsubscribeSpot(ws)
         return
       }
       case "ping": {
@@ -282,6 +285,7 @@ export const websocketHandler: WebSocketHandler<SocketState> = {
   },
 
   close(ws) {
+    onSocketCloseSpot(ws)
     onSocketCloseMarketStream(ws)
     onSocketClose(ws)
   },

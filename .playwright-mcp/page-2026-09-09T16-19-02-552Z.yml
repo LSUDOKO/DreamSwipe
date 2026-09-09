@@ -1,0 +1,26 @@
+- generic [ref=e3]:
+  - main [ref=e4]:
+    - generic [ref=e5]:
+      - generic [ref=e6]:
+        - paragraph [ref=e8]: ready to duel?
+        - paragraph [ref=e9]: sign in to swipe, stake, and take the pot.
+      - button "sign in to play" [ref=e10] [cursor=pointer]
+  - navigation [ref=e15]:
+    - link "home" [ref=e16] [cursor=pointer]:
+      - /url: /game/home
+      - img "home" [ref=e18]
+    - link "rank" [ref=e20] [cursor=pointer]:
+      - /url: /game/rank
+      - img "rank" [ref=e21]
+    - link "pvp" [ref=e23] [cursor=pointer]:
+      - /url: /game/pvp
+      - img "pvp" [ref=e25]
+    - link "bots" [ref=e27] [cursor=pointer]:
+      - /url: /game/bot-arena
+      - img "bots" [ref=e28]
+    - link "shop" [ref=e30] [cursor=pointer]:
+      - /url: /game/shop
+      - img "shop" [ref=e31]
+    - link "chat" [ref=e33] [cursor=pointer]:
+      - /url: /game/inventory
+      - img "chat" [ref=e34]

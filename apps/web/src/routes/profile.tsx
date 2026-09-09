@@ -12,11 +12,7 @@ import { WithdrawModal } from "@/components/withdraw-modal"
 import { MenuButton } from "@/components/menu-button"
 import { PixelButton } from "@/components/pixel-button"
 import { PlayerAvatar } from "@/components/player-avatar"
-import {
-  useDusdcBalance,
-  useManagerBalance,
-  useSuiBalance,
-} from "@/hooks/use-wallet-balances"
+import { useDusdcBalance, useSuiBalance } from "@/hooks/use-wallet-balances"
 
 const BLUE_BRAND_STYLE = {
   "--btn-bg": "#4094fb",
@@ -41,8 +37,11 @@ export default function Profile() {
     (location.state as { from?: string } | null)?.from ?? "/game/home"
   const { data: suiBalance = 0 } = useSuiBalance()
   const { data: dusdcBalance = 0 } = useDusdcBalance()
-  const { data: managerInfo } = useManagerBalance()
-  const managerBalance = managerInfo?.balance ?? 0
+  // There is no second funding account on EVM — the wallet holds collateral
+  // directly, so this row used to render the SAME number twice under a label
+  // for something that no longer exists. It now shows gas, which is the other
+  // balance a player can genuinely be blocked by.
+  const managerBalance = suiBalance
   const [depositOpen, setDepositOpen] = useState(false)
   const [withdrawOpen, setWithdrawOpen] = useState(false)
   const [avatarOpen, setAvatarOpen] = useState(false)
@@ -145,8 +144,8 @@ export default function Profile() {
               value={dusdcBalance.toFixed(2)}
             />
             <Stat
-              icon="/tokens/manager-usdc.png"
-              label="manager dusdc"
+              icon="/tokens/sui.png"
+              label="gas (stt)"
               value={managerBalance.toFixed(2)}
             />
           </section>

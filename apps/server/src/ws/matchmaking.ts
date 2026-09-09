@@ -503,6 +503,47 @@ async function sendRoomSnapshot(ws: AnyWs, duelId: string): Promise<void> {
   }
 }
 
+/**
+ * Re-read a duel and push `room_state` to everyone watching it.
+ *
+ * Called by the indexer after it mirrors fresh on-chain state, so a client
+ * that subscribed mid-duel advances instead of waiting on an event that is
+ * never coming. Silently does nothing when nobody is subscribed — there is no
+ * point reading the DB for an empty room.
+ */
+export async function refreshRoom(duelId: string): Promise<void> {
+  const bucket = roomSubscribers.get(duelId)
+  if (!bucket || bucket.size === 0) return
+  try {
+    const d = await getDuel(duelId)
+    if (!d) return
+    const msg: ServerMsg = {
+      type: "room_state",
+      duelId: d.id,
+      status: d.status,
+      cardsRevealed: d.cardsRevealed,
+      cardCount: d.cardCount,
+      cards: d.cards,
+      settledCount: d.settledCount,
+      p0Payout: d.p0Payout,
+      p0Premium: d.p0Premium,
+      p1Payout: d.p1Payout,
+      p1Premium: d.p1Premium,
+      startedAtMs: d.startedAtMs,
+      creator: d.creator,
+      challenger: d.challenger,
+      stakeCoinType: d.stakeCoinType,
+      cardOutcomes: d.cardOutcomes,
+      swipes: d.swipes,
+    }
+    for (const ws of bucket) send(ws, msg)
+  } catch (e) {
+    log.warn(
+      `room refresh ${shortId(duelId)} failed: ${e instanceof Error ? e.message : String(e)}`
+    )
+  }
+}
+
 export function unsubscribeRoom(ws: AnyWs, duelId: string): void {
   const bucket = roomSubscribers.get(duelId)
   if (bucket) {

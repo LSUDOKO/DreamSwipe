@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { sameAddress } from "@/lib/chain"
 import { Link, useParams } from "react-router"
 import { useCurrentAccount } from "@/hooks/use-wallet"
 import { apiUrl } from "@/lib/config"
@@ -212,8 +213,8 @@ export default function DuelView() {
   // and badge always agree. Spectators/signed-out viewers get silence.
   const settleStates = useMemo<Array<"pending" | "win" | "loss">>(() => {
     if (!duel) return []
-    const p0 = Boolean(address && duel.creator === address)
-    const p1 = Boolean(address && duel.challenger === address)
+    const p0 = sameAddress(duel.creator, address)
+    const p1 = sameAddress(duel.challenger, address)
     if (!p0 && !p1) return []
     return duel.cards.map((card, i) => {
       const outcome = duel.cardOutcomes.find((o) => o.cardIdx === i)
@@ -249,9 +250,8 @@ export default function DuelView() {
   }, [settleStates])
 
   // ── result modal ─────────────────────────────────────────────────
-  const myIsP0 = Boolean(address && duel?.creator === address)
-  const isParticipant =
-    myIsP0 || Boolean(address && duel?.challenger === address)
+  const myIsP0 = sameAddress(duel?.creator, address)
+  const isParticipant = myIsP0 || sameAddress(duel?.challenger, address)
   const summary = useMemo(
     () => (duel && isParticipant ? summarizeDuelResult(duel, myIsP0) : null),
     [duel, isParticipant, myIsP0]

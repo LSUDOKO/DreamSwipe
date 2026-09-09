@@ -101,23 +101,45 @@ async function tick(): Promise<void> {
       let mid: string | null = null
       let bestBid: string | null = null
       let bestAsk: string | null = null
+      // The client needs expiry to render a per-card settle countdown AND to
+      // fire the auto-swipe deadline; without it a stalled player silently
+      // forfeits every remaining card.
+      let expirySec: number | null = null
       try {
-        const book = await ex.getOrderBook(marketId)
+        const [book, market] = await Promise.all([
+          ex.getOrderBook(marketId),
+          ex.getMarket(marketId).catch(() => null),
+        ])
         mid = book.mid === null ? null : book.mid.toString()
         bestBid = book.bestBid === null ? null : book.bestBid.toString()
         bestAsk = book.bestAsk === null ? null : book.bestAsk.toString()
+        expirySec = market?.expirySec ?? null
       } catch {
         // One unreadable market must not stall the others. It reports as
         // "no price", which is the truth from the client's perspective.
       }
 
+      // Emitted as `oracle_tick` — the message the client already consumes in
+      // active-duel, duel-view and my-match-tile. Renaming it here (rather
+      // than migrating three client call sites) keeps one wire contract and
+      // avoids a silent drift where the server broadcasts a message nobody
+      // listens for. That drift is exactly what happened when this stream was
+      // first ported: live prices, per-card PnL, settle countdowns and the
+      // auto-swipe deadline all went dead at once, with nothing failing loudly.
+      //
+      // `spot` carries the market's mid in PROBABILITY millionths, not a USD
+      // price — on DreamDEX the live quantity is "what does the market think",
+      // and each card has its own book. Null when the book is empty, so the UI
+      // renders its honest "no quotes" state instead of a stale number.
       const payload = JSON.stringify({
-        type: "market_tick",
-        marketId,
-        mid,
+        type: "oracle_tick",
+        expiryMarketId: marketId,
+        spot: mid,
         bestBid,
         bestAsk,
-        observedAtMs: Date.now(),
+        expiry: expirySec === null ? null : String(expirySec),
+        settlementPrice: null,
+        timestampMs: Date.now(),
       })
       for (const ws of sockets) {
         try {
@@ -152,4 +174,117 @@ export function marketStreamStats(): {
   let total = 0
   for (const set of subscribers.values()) total += set.size
   return { markets: subscribers.size, subscribers: total }
+}
+
+// ─── Global spot feed (practice mode) ───────────────────────────────────────
+//
+// Practice is fully simulated, but its settlement loop still needs ONE live
+// number ticking so cards resolve on a real clock rather than a fake one. The
+// Sui build fed it a Pyth BTC spot price; DreamDEX publishes no such feed, so
+// this derives a global tick from the shortest-dated live BTC market's mid.
+//
+// That keeps practice honest: the number moves because a real market moved. It
+// is a probability in millionths, not a USD price — practice compares each
+// card against the same series, so the unit only has to be consistent.
+//
+// This exists because deleting `spot_subscribe` during the migration silently
+// killed practice mode entirely: the deck dealt, the player swiped, and the
+// session then timed out with "price feed stalled" every single time, with no
+// error anywhere to explain why.
+
+const spotSubscribers = new Set<ServerWebSocket<SocketState>>()
+let spotTimer: ReturnType<typeof setInterval> | null = null
+
+export function subscribeSpot(ws: ServerWebSocket<SocketState>): void {
+  spotSubscribers.add(ws)
+}
+
+export function unsubscribeSpot(ws: ServerWebSocket<SocketState>): void {
+  spotSubscribers.delete(ws)
+}
+
+export function onSocketCloseSpot(ws: ServerWebSocket<SocketState>): void {
+  spotSubscribers.delete(ws)
+}
+
+/**
+ * Last observed mid, and a deterministic walk when the venue has no book.
+ *
+ * Practice is FULLY SIMULATED — it must not stop working because DreamDEX
+ * happens to have no resting orders, which is the common case on testnet
+ * (every live book was empty when this was written). Gating practice on venue
+ * liquidity is what left it dead: the deck dealt, the player swiped, and the
+ * session timed out with "price feed stalled" every single time.
+ *
+ * So: use the real mid when one exists, and otherwise advance a synthetic
+ * series. The synthetic path is clearly labelled `synthetic: true` on the wire
+ * so nothing downstream can mistake it for a market price — and it is used
+ * ONLY by practice, never by a duel that settles real money.
+ */
+let lastSpot = 500_000n // 0.50 in probability millionths
+let spotSeed = 0
+
+function nextSyntheticSpot(): bigint {
+  // A small bounded random walk inside [0.05, 0.95]. Deterministic step size
+  // so the series looks like a market rather than noise.
+  spotSeed++
+  const drift = BigInt(((spotSeed * 7919) % 2001) - 1000) * 8n
+  let next = lastSpot + drift
+  if (next < 50_000n) next = 50_000n
+  if (next > 950_000n) next = 950_000n
+  lastSpot = next
+  return next
+}
+
+async function spotTick(): Promise<void> {
+  if (spotSubscribers.size === 0) return
+
+  let spot: bigint | null = null
+  let synthetic = false
+  try {
+    const markets = await getAdapter().listMarkets({ limit: 6 })
+    const target = markets.find((m) => m.asset === "BTC") ?? markets[0]
+    if (target) {
+      const book = await getAdapter().getOrderBook(target.id)
+      if (book.mid !== null && book.mid > 0n) {
+        spot = book.mid
+        lastSpot = book.mid
+      }
+    }
+  } catch (e) {
+    log.warn(`spot source read failed: ${(e as Error).message}`)
+  }
+
+  if (spot === null) {
+    spot = nextSyntheticSpot()
+    synthetic = true
+  }
+
+  const payload = JSON.stringify({
+    type: "spot_tick",
+    spot: spot.toString(),
+    // Explicit, so a consumer can never silently treat this as a real quote.
+    synthetic,
+    timestampMs: Date.now(),
+  })
+  for (const ws of spotSubscribers) {
+    try {
+      ws.send(payload)
+    } catch {
+      // Closed mid-send; the close handler clears it.
+    }
+  }
+}
+
+export function startSpotStream(): void {
+  if (spotTimer) return
+  spotTimer = setInterval(() => {
+    void spotTick()
+  }, TICK_INTERVAL_MS)
+  spotTimer.unref?.()
+}
+
+export function stopSpotStream(): void {
+  if (spotTimer) clearInterval(spotTimer)
+  spotTimer = null
 }

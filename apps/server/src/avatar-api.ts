@@ -17,6 +17,9 @@ import { isValidIconId } from "./avatar-icons"
 import { json } from "./lib/http"
 import { clientIp, consume } from "./ratelimit"
 import { env } from "./env"
+import { makeLogger } from "./log"
+
+const log = makeLogger("avatar")
 
 /**
  * Origin allowlist for avatar writes.
@@ -78,13 +81,16 @@ export async function handleAvatarRequest(
     try {
       return json(await getAvatarIcons(addresses))
     } catch (e) {
-      return json(
-        {
-          error: "avatar read failed",
-          detail: e instanceof Error ? e.message : String(e),
-        },
-        500
+      // A player with no stored avatar is not an error — the client falls back
+      // to a deterministic generated gradient. Returning 500 turned a missing
+      // database into a red console error on every screen that renders a
+      // player, which is noise that hides real failures.
+      log.warn(
+        `avatar read failed, serving empty: ${
+          e instanceof Error ? e.message : String(e)
+        }`
       )
+      return json({})
     }
   }
 

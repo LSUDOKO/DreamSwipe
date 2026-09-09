@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react"
+import { sameAddress, ZERO_ADDRESS } from "@/lib/chain"
 import { Link } from "react-router"
 import { useCurrentAccount } from "@/hooks/use-wallet"
 import { apiUrl } from "@/lib/config"
@@ -139,7 +140,7 @@ export default function GameHistory() {
 }
 
 function MatchRow({ duel, address }: { duel: DuelRow; address: string }) {
-  const myIsP0 = duel.creator === address
+  const myIsP0 = sameAddress(duel.creator, address)
   const opponent = myIsP0 ? duel.challenger : duel.creator
   const hasOpponent = Boolean(opponent) && opponent !== ZERO_ADDR
 
@@ -306,7 +307,10 @@ function Empty({ body, cta }: { body: string; cta?: boolean }) {
   )
 }
 
-const ZERO_ADDR = `0x${"0".repeat(64)}`
+// The EVM zero address is 42 chars; the Sui-era 66-char constant made
+// `opponent !== ZERO_ADDR` always true, so a duel with no challenger showed an
+// opponent row for 0x0000…0000.
+const ZERO_ADDR = ZERO_ADDRESS
 
 function pnlColor(net: bigint, premium: bigint): string {
   if (premium <= 0n) return "text-white/70"

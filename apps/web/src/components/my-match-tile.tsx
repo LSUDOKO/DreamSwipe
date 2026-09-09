@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react"
+import { sameAddress } from "@/lib/chain"
 import { Link } from "react-router"
 import { useCurrentAccount } from "@/hooks/use-wallet"
 import { apiUrl } from "@/lib/config"
@@ -267,7 +268,7 @@ export function MyMatchTile() {
     )
   }
 
-  const myIsP0 = pick.creator === address
+  const myIsP0 = sameAddress(pick.creator, address)
   const opponentAddr = myIsP0 ? pick.challenger : pick.creator
   // On-chain settlement precedes the indexer's `settledCount`, so count
   // oracles the tick stream reports settled and show whichever is ahead.

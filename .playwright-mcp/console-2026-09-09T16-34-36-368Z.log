@@ -1,0 +1,4 @@
+[     356ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://localhost:5173/node_modules/.vite/deps/react-dom_client.js?v=6b43c1ba:20102
+[     492ms] [WARNING] WebSocket connection to 'ws://localhost:3001/ws' failed: WebSocket is closed before the connection is established. @ http://localhost:5173/src/hooks/use-flicky-socket.ts:79
+[     519ms] [ERROR] Failed to load resource: the server responded with a status of 500 (Internal Server Error) @ http://localhost:3001/avatars?addresses=0x0000000000000000000000000000000000000000000000000000000000000b07:0
+[   25002ms] [ERROR] Failed to load resource: the server responded with a status of 500 (Internal Server Error) @ http://localhost:3001/avatars?addresses=0xb07b07b07b07b07b07b07b07b07b07b07b07b07b:0

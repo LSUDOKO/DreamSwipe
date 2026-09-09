@@ -21,7 +21,16 @@ export interface GameOutletContext {
 // Routes that render even when signed out — used to showcase features
 // (e.g. the swap) before login. Everything else falls back to the
 // unified <SignedOutPrompt>.
-const PUBLIC_ROUTES = new Set<string>(["/game/shop", "/game/rank"])
+// Modes that need no wallet are PUBLIC. Practice is fully simulated and Bot
+// Arena reads live market data without ever signing — gating them behind
+// sign-in defeats their whole purpose as the try-before-you-connect entry
+// points, which is exactly what a first-time judge or player hits.
+const PUBLIC_ROUTES = new Set<string>([
+  "/game/shop",
+  "/game/rank",
+  "/game/practice",
+  "/game/bot-arena",
+])
 
 // Shared duel links must open for signed-out recipients — every
 // /game/duel/<id> view is public (read-only for non-participants).
@@ -35,7 +44,7 @@ import { LoginModal } from "@/components/login-modal"
 import { MenuButton } from "@/components/menu-button"
 import { PixelButton } from "@/components/pixel-button"
 import { PlayerAvatar } from "@/components/player-avatar"
-import { useDusdcBalance, useManagerBalance } from "@/hooks/use-wallet-balances"
+import { useDusdcBalance, useSuiBalance } from "@/hooks/use-wallet-balances"
 import { ensureStarterAvatar } from "@/lib/avatar-store"
 import { clearPendingSwipe, peekPendingSwipe } from "@/lib/nav-transition"
 import { installAudioUnlock, playSfx, startBgm, stopBgm } from "@/lib/sound"
@@ -55,6 +64,7 @@ const NAV_TABS = [
     icon: "/icons/swords.png",
     featured: true,
   },
+  { to: "/game/bot-arena", label: "bots", icon: "/icons/computer.png" },
   { to: "/game/shop", label: "shop", icon: "/icons/coins.png" },
   { to: "/game/inventory", label: "chat", icon: "/icons/message.png" },
 ] as const
@@ -309,8 +319,8 @@ function FrameHeader({
   const account = useCurrentAccount()
   const location = useLocation()
   const { data: dusdc } = useDusdcBalance()
-  const { data: managerInfo } = useManagerBalance()
-  const managerBalance = managerInfo?.balance ?? 0
+  const { data: gas } = useSuiBalance()
+  const gasBalance = gas ?? 0
   // When signed out we render the unified empty-state prompt in <main>,
   // so suppress the shop's tall decor header (it'd push the prompt
   // around route-to-route).
@@ -350,11 +360,16 @@ function FrameHeader({
               label="wallet"
               onClick={onAddClick}
             />
+            {/* Gas, not a second collateral account. The Sui build had a
+                separate DeepBook funding account here; on EVM the wallet holds
+                collateral directly, so this chip showed the SAME number twice
+                under a label for something that no longer exists. STT is the
+                other balance a player can genuinely be blocked by. */}
             <BalanceChip
-              id="balance-manager"
-              icon="/tokens/manager-usdc.png"
-              amount={managerBalance.toFixed(2)}
-              label="manager"
+              id="balance-gas"
+              icon="/tokens/sui.png"
+              amount={gasBalance.toFixed(3)}
+              label="gas"
               onClick={onAddClick}
             />
           </div>

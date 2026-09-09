@@ -19,7 +19,7 @@ import { PixelButton } from "@/components/pixel-button"
  */
 export function NetworkGate({
   what = "duels",
-  reason = "flicky runs on deepbook predict, which is still testnet-only.",
+  reason = "dreamswipe runs on dreamdex event contracts, which are testnet-only.",
 }: {
   /** Noun for the headline, e.g. "duels", "practice", "the shop". */
   what?: string
