@@ -1,0 +1,5 @@
+# SPA fallback. Every route is client-side (react-router), so a direct hit on
+# /game/bot-arena or a shared /game/duel/<id> link must serve index.html rather
+# than 404. Without this, refreshing any page but "/" breaks in production —
+# verified: a static host returned 404 for /game/bot-arena.
+/*  /index.html  200
