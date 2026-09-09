@@ -138,7 +138,7 @@ Testnet STT (gas) and tUSDC (collateral) come from the SomniaHacks faucet:
 <https://t.me/+XHq0F0JXMyhmMzM0>
 
 ```bash
-bun typecheck   # 6/6 packages
+bun typecheck   # 4/4 packages
 bun run test    # 242 tests
 bun build
 
