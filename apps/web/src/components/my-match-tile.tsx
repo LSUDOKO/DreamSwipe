@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react"
 import { Link } from "react-router"
-import { useCurrentAccount } from "@mysten/dapp-kit-react"
+import { useCurrentAccount } from "@/hooks/use-wallet"
 import { apiUrl } from "@/lib/config"
 import { useFlickySocket } from "@/hooks/use-flicky-socket"
 import { playSfx } from "@/lib/sound"

@@ -27,11 +27,8 @@
  * `NoCardsAvailableError`, which the existing `auto` fallback already knows how
  * to handle.
  */
-import {
-  SomniaDreamDexAdapter,
-  VenueUnavailableError,
-  type EventMarket,
-} from "@workspace/dreamdex"
+import { SomniaDreamDexAdapter } from "@workspace/dreamdex/adapter"
+import { VenueUnavailableError, type EventMarket } from "@workspace/dreamdex"
 import { NoCardsAvailableError, type BuiltDeck } from "./card-source"
 import { makeLogger } from "./log"
 

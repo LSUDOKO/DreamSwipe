@@ -42,7 +42,7 @@ const SCALAR_HTML = `<!doctype html>
 
 export async function handleDocsRequest(
   req: Request,
-  url: URL,
+  url: URL
 ): Promise<Response | null> {
   if (url.pathname === "/openapi.json" && req.method === "GET") {
     const spec = await loadSpec()
@@ -55,7 +55,10 @@ export async function handleDocsRequest(
       },
     })
   }
-  if ((url.pathname === "/docs" || url.pathname === "/docs/") && req.method === "GET") {
+  if (
+    (url.pathname === "/docs" || url.pathname === "/docs/") &&
+    req.method === "GET"
+  ) {
     return new Response(SCALAR_HTML, {
       status: 200,
       headers: { "content-type": "text/html; charset=utf-8" },

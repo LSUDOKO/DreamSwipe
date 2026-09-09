@@ -143,12 +143,13 @@ export class MomentumAgent implements PredictionAgent {
   readonly name = "Momentum"
   readonly description =
     "Follows recent price movement — backs the side the market is drifting toward."
+  private readonly difficulty: Difficulty
+  private readonly minSamples: number
 
-  constructor(
-    private readonly difficulty: Difficulty = "medium",
-    /** Minimum samples before the signal means anything. */
-    private readonly minSamples = 4
-  ) {}
+  constructor(difficulty: Difficulty = "medium", minSamples: number = 4) {
+    this.difficulty = difficulty
+    this.minSamples = minSamples
+  }
 
   async decide(context: PredictionContext): Promise<BotDecision> {
     const history = context.midHistory
@@ -197,12 +198,16 @@ export class MeanReversionAgent implements PredictionAgent {
   readonly name = "Mean Reversion"
   readonly description =
     "Fades over-extended markets — backs the less crowded side when the crowd looks stretched."
+  private readonly difficulty: Difficulty
+  private readonly stretchThreshold: number
 
   constructor(
-    private readonly difficulty: Difficulty = "medium",
-    /** How far from 0.5 counts as "stretched". 0.15 → beyond 0.35/0.65. */
-    private readonly stretchThreshold = 0.15
-  ) {}
+    difficulty: Difficulty = "medium",
+    stretchThreshold: number = 0.15
+  ) {
+    this.difficulty = difficulty
+    this.stretchThreshold = stretchThreshold
+  }
 
   async decide(context: PredictionContext): Promise<BotDecision> {
     const book = context.book
@@ -256,15 +261,16 @@ export class ClobImbalanceAgent implements PredictionAgent {
   readonly name = "CLOB Imbalance"
   readonly description =
     "Reads resting order-book depth — backs the side with more size behind it."
+  private readonly difficulty: Difficulty
+  private readonly minDepth: bigint
 
   constructor(
-    private readonly difficulty: Difficulty = "medium",
-    /**
-     * Minimum total depth, in collateral base units, before the signal is
-     * trusted. Defaults to 1 whole contract at 6-decimal collateral.
-     */
-    private readonly minDepth = 1_000_000n
-  ) {}
+    difficulty: Difficulty = "medium",
+    minDepth: bigint = 1_000_000n
+  ) {
+    this.difficulty = difficulty
+    this.minDepth = minDepth
+  }
 
   async decide(context: PredictionContext): Promise<BotDecision> {
     const book = context.book
@@ -303,8 +309,11 @@ export class ContrarianAgent implements PredictionAgent {
   readonly name = "Contrarian"
   readonly description =
     "Always backs the less crowded side — higher payout when it lands, and it often doesn't."
+  private readonly difficulty: Difficulty
 
-  constructor(private readonly difficulty: Difficulty = "medium") {}
+  constructor(difficulty: Difficulty = "medium") {
+    this.difficulty = difficulty
+  }
 
   async decide(context: PredictionContext): Promise<BotDecision> {
     const book = context.book

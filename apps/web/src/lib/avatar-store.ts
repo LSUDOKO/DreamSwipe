@@ -141,7 +141,8 @@ export function ensureStarterAvatar(address: string): void {
       enqueue(key)
       await whenSettled(key)
       if (!confirmedAbsent.has(key)) return // row exists — real pick or explicit gradient
-      const id = AVATAR_ICONS[Math.floor(Math.random() * AVATAR_ICONS.length)].id
+      const id =
+        AVATAR_ICONS[Math.floor(Math.random() * AVATAR_ICONS.length)].id
       setAvatarIcon(address, id)
     } finally {
       assigning.delete(key)

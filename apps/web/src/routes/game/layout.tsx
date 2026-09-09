@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useRef, useState } from "react"
 import { Link, NavLink, Outlet, useLocation, useNavigate } from "react-router"
 import type { CSSProperties } from "react"
-import { useCurrentAccount } from "@mysten/dapp-kit-react"
+import { useCurrentAccount } from "@/hooks/use-wallet"
 import {
   OnboardingProvider,
   useOnboardingContext,

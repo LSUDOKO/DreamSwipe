@@ -14,11 +14,8 @@
  *
  *   bun run check:dreamdex
  */
-import {
-  SomniaDreamDexAdapter,
-  contrarianEdge,
-  ONE_PROBABILITY,
-} from "@workspace/dreamdex"
+import { SomniaDreamDexAdapter } from "@workspace/dreamdex/adapter"
+import { contrarianEdge, ONE_PROBABILITY } from "@workspace/dreamdex"
 import {
   MAX_HORIZON_MS,
   MIN_DECK_SIZE,

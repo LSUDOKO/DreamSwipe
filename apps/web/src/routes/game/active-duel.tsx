@@ -1,22 +1,19 @@
 import { useEffect, useRef, useState } from "react"
 import { Link } from "react-router"
-import { useCurrentAccount, useCurrentClient } from "@mysten/dapp-kit-react"
+import { useCurrentAccount } from "@/hooks/use-wallet"
+import { useConfig } from "wagmi"
 import type { ClientMsg, ServerMsg } from "@/lib/protocol"
 import { STAKE_TIERS, type Tier } from "@/lib/protocol"
 import type { Unsubscribe } from "@/hooks/use-flicky-socket"
+import { DEFAULT_DECK_SIZE } from "@/lib/flicky"
 import {
-  buildCreateDuelDusdcTx,
-  buildJoinDuelDusdcTx,
-  DEFAULT_DECK_SIZE,
-  resolveCreatedDuelId,
-} from "@/lib/flicky"
-import {
-  DEEPBOOK,
-  buildStakedSwipeTx,
-  fetchAccountState,
-  fetchMarketTickSize,
-  fmtDusdc,
-} from "@/lib/deepbook"
+  DuelTier,
+  SwipeDirection,
+  createDuel,
+  joinDuel,
+  signSwipe,
+} from "@/lib/duel"
+import { duelIdFromReceipt } from "@/lib/duel-events"
 import { useFlickySign } from "@/lib/use-flicky-sign"
 import { fmtPnlPct, upProbability } from "@/lib/pnl"
 import {
@@ -24,7 +21,6 @@ import {
   SWIPE_WINDOW_MS,
   swipeWindowRemainingMs,
 } from "@/lib/swipe-window"
-import { SWIPE_QUANTITY } from "@/lib/funding"
 import { playSfx } from "@/lib/sound"
 import { WsErrorBanner } from "@/components/ws-error-banner"
 import {
@@ -44,7 +40,6 @@ import { type RoomState } from "@/lib/room-state"
  * premium ≲ 0.7 × quantity — gate on that plus a small headroom so we prompt a
  * top-up BEFORE the on-chain abort.
  */
-const MIN_ACCOUNT_PER_SWIPE = (SWIPE_QUANTITY * 7n) / 10n
 
 /**
  * How long the challenger waits for `duel_assigned` before giving up.
@@ -117,7 +112,6 @@ type Phase =
 export function ActiveDuel({
   role,
   tier,
-  managerId,
   deckHash,
   deckSize,
   resumeDuelId,
@@ -130,7 +124,7 @@ export function ActiveDuel({
   onExit,
 }: Props) {
   const account = useCurrentAccount()
-  const client = useCurrentClient()
+  const config = useConfig()
   const sign = useFlickySign()
   const [phase, setPhase] = useState<Phase>(
     resumeDuelId
@@ -152,7 +146,6 @@ export function ActiveDuel({
   // swipe PTB's (lower_tick, higher_tick] pair. Resolved once per unique
   // market (from the predict indexer, via `fetchMarketTickSize`) when the
   // deck arrives.
-  const [tickSizes, setTickSizes] = useState<Record<string, bigint>>({})
   // Refs so the WS handler can read latest state without re-subscribing.
   const phaseRef = useRef(phase)
   phaseRef.current = phase
@@ -221,36 +214,24 @@ export function ActiveDuel({
     })
   }, [onMessage])
 
-  // When the deck arrives, prefetch each unique market's `tick_size`
-  // (needed to build the swipe PTB — see `deriveTicks` in lib/deepbook.ts)
-  // and subscribe to its live ticks. Expiry is NOT fetched here — it rides
-  // in on the `oracle_tick` WS message itself (see `ticks` above), so the
-  // client never discovers markets on its own.
+  // When the deck arrives, subscribe to each unique market's live ticks.
+  //
+  // The Sui build ALSO prefetched a per-market `tick_size` here, to convert a
+  // strike into the tick pair its swipe PTB needed. DreamDEX event contracts
+  // carry their own strike and quote one book in probability terms, so there
+  // are no ticks to derive and nothing to prefetch — only the subscription
+  // remains.
   const oraclesReady =
     roomState && roomState.cards.length === roomState.cardCount
       ? roomState.cards
       : null
   useEffect(() => {
     if (!oraclesReady) return
-    let cancelled = false
     const unique = Array.from(
       new Set(oraclesReady.map((c) => c.expiry_market_id))
     )
-    ;(async () => {
-      const next: Record<string, bigint> = {}
-      for (const id of unique) {
-        try {
-          next[id] = await fetchMarketTickSize(id)
-        } catch (e) {
-          console.warn(`fetchMarketTickSize(${id}) failed`, e)
-        }
-      }
-      if (cancelled) return
-      setTickSizes((prev) => ({ ...prev, ...next }))
-      send({ type: "oracle_subscribe", marketIds: unique })
-    })()
+    send({ type: "oracle_subscribe", marketIds: unique })
     return () => {
-      cancelled = true
       send({ type: "oracle_unsubscribe", marketIds: unique })
     }
   }, [oraclesReady, send])
@@ -268,28 +249,26 @@ export function ActiveDuel({
       try {
         if (!account) throw new Error("wallet not connected")
         if (!deckHash || !tier) throw new Error("missing deck hash or tier")
-        const deckHashBytes = hexToBytes(deckHash)
-        if (deckHashBytes.length !== 32) {
-          throw new Error(
-            `deck hash must be 32 bytes, got ${deckHashBytes.length}`
-          )
+        if (!/^0x[0-9a-fA-F]{64}$/.test(deckHash)) {
+          throw new Error(`deck commit must be 32 bytes, got "${deckHash}"`)
         }
-        const tx = await buildCreateDuelDusdcTx(
-          client,
-          account.address,
-          deckHashBytes,
-          STAKE_TIERS[tier],
-          DEEPBOOK.dusdcType,
-          deckSize ?? DEFAULT_DECK_SIZE
-        )
-        const res = await sign.mutateAsync({ transaction: tx })
-        // Sponsored-gas path returns only `{ digest }` — objectChanges
-        // isn't included. Wait for the tx to be indexed, then re-fetch
-        // it to read the created Duel id.
-        const duelId = await resolveCreatedDuelId(client, res.digest)
+        const stake = STAKE_TIERS[tier]
+        const isStaked = stake > 0n
+        const res = await sign.mutateAsync({
+          send: (cfg) =>
+            createDuel(cfg, {
+              deckCommit: deckHash as `0x${string}`,
+              deckSize: deckSize ?? DEFAULT_DECK_SIZE,
+              tier: isStaked ? DuelTier.Staked : DuelTier.Free,
+              stake,
+            }),
+        })
+        // The duel id is assigned on chain and emitted in DuelCreated, so it
+        // is read from the receipt rather than guessed client-side.
+        const duelId = await duelIdFromReceipt(config, res.hash)
         if (!duelId) {
           throw new Error(
-            "create_duel landed but Duel id not yet indexed — try again"
+            "createDuel landed but no DuelCreated event was found — try again"
           )
         }
         // Hand off to the deep-linkable play route if the matchmaking
@@ -308,7 +287,7 @@ export function ActiveDuel({
         })
       }
     })()
-  }, [role, deckHash, deckSize, account, client, sign, tier, send, onDuelReady])
+  }, [role, deckHash, deckSize, account, config, sign, tier, send, onDuelReady])
 
   // Challenger: wait for duel_assigned, then sign join_duel.
   useEffect(() => {
@@ -320,14 +299,9 @@ export function ActiveDuel({
       try {
         if (!account) throw new Error("wallet not connected")
         if (!tier) throw new Error("missing tier")
-        const tx = await buildJoinDuelDusdcTx(
-          client,
-          account.address,
-          msg.duelId,
-          STAKE_TIERS[tier],
-          DEEPBOOK.dusdcType
-        )
-        await sign.mutateAsync({ transaction: tx })
+        await sign.mutateAsync({
+          send: (cfg) => joinDuel(cfg, msg.duelId as `0x${string}`),
+        })
         if (onDuelReady) {
           onDuelReady(msg.duelId)
           return
@@ -342,7 +316,7 @@ export function ActiveDuel({
         })
       }
     })
-  }, [role, onMessage, account, client, sign, tier, send, onDuelReady])
+  }, [role, onMessage, account, config, sign, tier, send, onDuelReady])
 
   // Challenger backstop: surface a dead pairing instead of sitting on
   // "Setting up the match…" indefinitely. Only fires while still in ENTRY
@@ -424,50 +398,44 @@ export function ActiveDuel({
     if (phase.kind !== "SWIPING" || !roomState || !account) return
     const { duelId, cardIdx } = phase
     const card = roomState.cards[cardIdx]
-    const tickSize = card ? tickSizes[card.expiry_market_id] : undefined
-    if (!card || !tickSize) {
-      throw new Error("market tick size not loaded yet — try again in a moment")
+    if (!card) {
+      throw new Error("card not loaded yet — try again in a moment")
     }
     try {
-      // Pre-flight the account balance: each swipe's mint premium is
-      // withdrawn from the AccountWrapper, and if it can't cover it the tx
-      // aborts on-chain with an opaque `account::withdraw_balance` code.
-      // Catch it here and prompt a top-up instead of burning a sponsored tx.
-      const { balance } = await fetchAccountState(account.address)
-      if (balance < MIN_ACCOUNT_PER_SWIPE) {
+      // A swipe is an EIP-712 SIGNATURE, not a transaction: the player signs
+      // off-chain (no wallet popup for gas, no on-chain wait) and the relayer
+      // records it. The signature binds duel + card + direction + nonce +
+      // deadline, so the relayer can neither forge nor replay it.
+      //
+      // The whole DeepBook preflight this replaced — account-balance checks and
+      // LP-backing retries — is gone because there is no funding account to
+      // drain and no per-market backing gate to trip.
+      const signed = await signSwipe(config, {
+        duelId: duelId as `0x${string}`,
+        cardIdx,
+        direction: isUp ? SwipeDirection.Up : SwipeDirection.Down,
+        player: account.address as `0x${string}`,
+      })
+
+      const base = import.meta.env.VITE_SERVER_HTTP_URL || ""
+      const res = await fetch(`${base}/relay/swipe`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          duelId: signed.duelId,
+          player: account.address,
+          cardIdx: signed.cardIdx,
+          direction: signed.direction,
+          nonce: signed.nonce.toString(),
+          deadline: signed.deadline.toString(),
+          signature: signed.signature,
+        }),
+      })
+      if (!res.ok) {
+        const detail = await res.text().catch(() => "")
         throw new Error(
-          `Account balance low (${fmtDusdc(balance)}). Each swipe needs about ${fmtDusdc(
-            MIN_ACCOUNT_PER_SWIPE
-          )} of dUSDC in your account for the mint premium — top up your account, then swipe again.`
+          `relayer rejected the swipe (${res.status})${detail ? `: ${detail.slice(0, 140)}` : ""}`
         )
-      }
-      // The per-market LP backing gate (expiry_cash::assert_backing /
-      // EInsufficientCash, abort code 0) flips back within seconds on testnet.
-      // Retry a couple of times (fresh PTB each time) before surfacing it, so a
-      // transient LP dip doesn't dead-end the swipe. `busy` stays set across
-      // the retries, so the card just reads as "processing".
-      for (let attempt = 0; ; attempt++) {
-        try {
-          const tx = buildStakedSwipeTx({
-            duelId,
-            wrapperId: managerId,
-            marketId: card.expiry_market_id,
-            strike: BigInt(card.strike),
-            tickSize,
-            cardIdx,
-            isUp,
-            quantity: SWIPE_QUANTITY,
-            stakeCoinType: roomState.stakeCoinType,
-          })
-          await sign.mutateAsync({ transaction: tx })
-          break
-        } catch (err) {
-          const m = err instanceof Error ? err.message : String(err)
-          const transientBacking =
-            /assert_backing|EInsufficientCash|abort code: 0\b/.test(m)
-          if (!transientBacking || attempt >= 2) throw err
-          await new Promise((r) => setTimeout(r, 1500))
-        }
       }
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
@@ -800,16 +768,4 @@ function countMySwipes(rs: RoomState, myAddress: string | undefined): number {
     if (my) n++
   }
   return n
-}
-
-function hexToBytes(hex: string): Uint8Array {
-  const clean = hex.startsWith("0x") ? hex.slice(2) : hex
-  if (clean.length % 2 !== 0) {
-    throw new Error(`hex string has odd length: ${hex}`)
-  }
-  const bytes = new Uint8Array(clean.length / 2)
-  for (let i = 0; i < bytes.length; i++) {
-    bytes[i] = parseInt(clean.substring(i * 2, i * 2 + 2), 16)
-  }
-  return bytes
 }

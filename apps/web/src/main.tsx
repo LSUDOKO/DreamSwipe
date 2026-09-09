@@ -2,14 +2,13 @@ import { StrictMode } from "react"
 import { createRoot } from "react-dom/client"
 import { createBrowserRouter, RouterProvider, Navigate } from "react-router"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import { DAppKitProvider } from "@mysten/dapp-kit-react"
+import { WagmiProvider } from "wagmi"
 
 import "@workspace/ui/globals.css"
 import "@/styles/onboarding.css"
-import { dAppKit } from "@/lib/dapp-kit"
+import { wagmiConfig } from "@/lib/chain"
 import { ThemeProvider } from "@/components/theme-provider.tsx"
 import Landing from "@/routes/landing.tsx"
-import AuthCallback from "@/routes/auth-callback.tsx"
 import Profile from "@/routes/profile.tsx"
 import GameLayout from "@/routes/game/layout.tsx"
 import GameHome from "@/routes/game/home.tsx"
@@ -21,10 +20,10 @@ import GamePractice from "@/routes/game/practice.tsx"
 import GameShop from "@/routes/game/shop.tsx"
 import GameRank from "@/routes/game/rank.tsx"
 import GameChat from "@/routes/game/chat.tsx"
+import BotArena from "@/routes/game/bot-arena.tsx"
 
 const router = createBrowserRouter([
   { path: "/", element: <Landing /> },
-  { path: "/auth/callback", element: <AuthCallback /> },
   { path: "/profile", element: <Profile /> },
   {
     path: "/game",
@@ -37,6 +36,7 @@ const router = createBrowserRouter([
       { path: "duel/:duelId", element: <DuelView /> },
       { path: "history", element: <GameHistory /> },
       { path: "practice", element: <GamePractice /> },
+      { path: "bot-arena", element: <BotArena /> },
       { path: "shop", element: <GameShop /> },
       { path: "rank", element: <GameRank /> },
       { path: "inventory", element: <GameChat /> },
@@ -49,11 +49,11 @@ const queryClient = new QueryClient()
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <ThemeProvider defaultTheme="dark">
-      <QueryClientProvider client={queryClient}>
-        <DAppKitProvider dAppKit={dAppKit}>
+      <WagmiProvider config={wagmiConfig}>
+        <QueryClientProvider client={queryClient}>
           <RouterProvider router={router} />
-        </DAppKitProvider>
-      </QueryClientProvider>
+        </QueryClientProvider>
+      </WagmiProvider>
     </ThemeProvider>
   </StrictMode>
 )

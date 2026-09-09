@@ -142,49 +142,54 @@ describe.skipIf(!HAS_TEST_DB)("deriveWrapperFor return contract", () => {
  * a momentary market dip — otherwise a real just-completed deposit produces
  * a spurious `insufficient_balance` error immediately after success.
  */
-describe.skipIf(!HAS_TEST_DB)("checkQueueBalanceGate balance-read retry", () => {
-  beforeEach(async () => {
-    await resetTables()
-  })
+describe.skipIf(!HAS_TEST_DB)(
+  "checkQueueBalanceGate balance-read retry",
+  () => {
+    beforeEach(async () => {
+      await resetTables()
+    })
 
-  afterAll(async () => {
-    await db.closeDb()
-  })
+    afterAll(async () => {
+      await db.closeDb()
+    })
 
-  test("absorbs one stale-replica read and succeeds once balance catches up", async () => {
-    const required = 16_000_000n
-    // exists, address (wrapper resolution) — then two balance reads: the
-    // first still reflects the pre-deposit balance, the second (post-retry)
-    // reflects the deposit having landed.
-    const c = clientFromReturns([
-      boolBytes(true),
-      addrBytes(WRAPPER),
-      u64Bytes(1_000_000n),
-      u64Bytes(20_000_000n),
-    ])
-    const gate = await predict.checkQueueBalanceGate(c, ALICE, required)
-    expect(gate.ok).toBe(true)
-    if (gate.ok) expect(gate.balance).toBe(20_000_000n)
-  })
+    test("absorbs one stale-replica read and succeeds once balance catches up", async () => {
+      const required = 16_000_000n
+      // exists, address (wrapper resolution) — then two balance reads: the
+      // first still reflects the pre-deposit balance, the second (post-retry)
+      // reflects the deposit having landed.
+      const c = clientFromReturns([
+        boolBytes(true),
+        addrBytes(WRAPPER),
+        u64Bytes(1_000_000n),
+        u64Bytes(20_000_000n),
+      ])
+      const gate = await predict.checkQueueBalanceGate(c, ALICE, required)
+      expect(gate.ok).toBe(true)
+      if (gate.ok) expect(gate.balance).toBe(20_000_000n)
+    })
 
-  test("still reports insufficient_balance once retries are exhausted", async () => {
-    const required = 16_000_000n
-    const c = clientFromReturns([
-      boolBytes(true),
-      addrBytes(WRAPPER),
-      u64Bytes(1_000_000n),
-      u64Bytes(1_000_000n),
-      u64Bytes(1_000_000n),
-    ])
-    const gate = await predict.checkQueueBalanceGate(c, BOB, required)
-    expect(gate.ok).toBe(false)
-    if (!gate.ok && gate.reason === "insufficient_balance") {
-      expect(gate.balance).toBe(1_000_000n)
-    } else {
-      throw new Error(`expected insufficient_balance, got ${JSON.stringify(gate)}`)
-    }
-  })
-})
+    test("still reports insufficient_balance once retries are exhausted", async () => {
+      const required = 16_000_000n
+      const c = clientFromReturns([
+        boolBytes(true),
+        addrBytes(WRAPPER),
+        u64Bytes(1_000_000n),
+        u64Bytes(1_000_000n),
+        u64Bytes(1_000_000n),
+      ])
+      const gate = await predict.checkQueueBalanceGate(c, BOB, required)
+      expect(gate.ok).toBe(false)
+      if (!gate.ok && gate.reason === "insufficient_balance") {
+        expect(gate.balance).toBe(1_000_000n)
+      } else {
+        throw new Error(
+          `expected insufficient_balance, got ${JSON.stringify(gate)}`
+        )
+      }
+    })
+  }
+)
 
 /**
  * `requiredQueueBalance` is pure (just STAKE_TIERS arithmetic, no RPC/DB),

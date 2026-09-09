@@ -23,6 +23,7 @@
   },
   "exports": {
     ".": "./src/index.ts",
+    "./adapter": "./src/adapter.ts",
     "./types": "./src/types.ts"
   }
 }

@@ -1,444 +1,138 @@
 /**
- * DeepBook Predict (8-21) integration — staked-tier swipes + account onboarding.
+ * Collateral + swipe-window helpers.
  *
- * Each staked swipe is ONE player-signed, sponsored PTB combining:
- *   - `account::generate_auth` — owner auth for the player's AccountWrapper
- *   - `expiry_market::load_live_pricer` — market-bound live pricer (once per tx)
- *   - `expiry_market::mint_exact_quantity` — mints a real 8-21 binary position
- *     funded from the player's escrowed dUSDC; returns a `u256` order id
- *   - `duel::record_swipe(..., order_id, ...)` — records the swipe in the Flicky
- *     duel for score-based PvP payout, chaining the mint's order id
+ * ── Why this file still exists, and why the name is temporary ───────────────
  *
- * The DeepBook / account side is built with RAW `tx.moveCall` (the minimized
- * codegen doesn't expose `expiry_market` / `account` entry points); the flicky
- * `duel::record_swipe` call stays on codegen. The player wallet only ever holds
- * dUSDC — gas is sponsored end-to-end via `lib/sponsor.ts`.
+ * On Sui this module wrapped DeepBook Predict: deriving a per-player
+ * `AccountWrapper`, building deposit/withdraw PTBs, converting strikes to
+ * ticks. **None of that survives on Somnia** — DreamDEX event contracts have
+ * no funding account to derive, and collateral is a plain ERC-20 the player
+ * already holds.
  *
- * A player owns a deterministic, shared `AccountWrapper` (created once via
- * `account_registry::new` + `account::share`) and funds it via `deposit_funds`.
+ * What is kept is the small set of pure helpers the UI genuinely still needs
+ * (formatting, swipe-window timing), re-implemented for EVM. The module keeps
+ * its old path so the migration is one commit rather than a rename touching
+ * eight components; it should be folded into `lib/chain.ts` afterwards.
+ *
+ * Everything venue-specific now lives behind `@workspace/dreamdex`.
  */
-import { Transaction } from "@mysten/sui/transactions"
-import { coinWithBalance } from "@mysten/sui/transactions"
-import type { ClientWithCoreApi } from "@mysten/sui/client"
-import { normalizeSuiObjectId } from "@mysten/sui/utils"
-
-type SuiClient = ClientWithCoreApi
-
-import * as duel from "@/sui/gen/flicky/duel"
-import { CONFIG, apiUrl } from "./config"
+import { COLLATERAL_DECIMALS, COLLATERAL_SYMBOL } from "./chain"
 
 /**
- * DeepBook Predict (8-21) object / package ids for the ACTIVE network — a
- * flat re-export of the network slice in lib/config.ts, kept under this name
- * so the PTB builders below read `DEEPBOOK.foo` unchanged.
+ * Collateral descriptor.
+ *
+ * On Shannon testnet this is tUSDC at 6 decimals — NOT USDso at 18, which is
+ * mainnet-only. The two differ by 10^12 and nothing reverts to tell you, so
+ * `decimals` is carried explicitly everywhere it is used.
  */
-export const DEEPBOOK = {
-  deepbookPredictPackageId: CONFIG.deepbookPredictPackageId,
-  accountPackageId: CONFIG.accountPackageId,
-  accountRegistryId: CONFIG.accountRegistryId,
-  protocolConfigId: CONFIG.protocolConfigId,
-  oracleRegistryId: CONFIG.oracleRegistryId,
-  pythFeedId: CONFIG.pythFeedId,
-  bsValueStoreId: CONFIG.bsValueStoreId,
-  bsSviStoreId: CONFIG.bsSviStoreId,
-  accumulatorRootId: CONFIG.accumulatorRootId,
-  predictIndexerUrl: CONFIG.predictIndexerUrl,
-  /** dUSDC on testnet (1e6 decimals); native USDC on mainnet. */
-  dusdcType: CONFIG.dusdcCoinType,
+export const DUSDC = {
+  symbol: COLLATERAL_SYMBOL,
+  decimals: COLLATERAL_DECIMALS,
 } as const
 
-// === Wrapper discovery ===
+/** Native gas token. STT on testnet; SOMI is mainnet. */
+export const SUI = {
+  symbol: "STT",
+  decimals: 18,
+} as const
 
 /**
- * localStorage namespace for cached AccountWrapper ids.
+ * Per-swipe sizing.
  *
- * A player's wrapper is deterministic + permanent (DeepBook never deletes it),
- * so this cache is effectively long-lived. Each registry migration gets a new
- * namespace so an old deployment's deterministic wrapper is never reused.
+ * `QUANTITY` is one whole prediction contract in collateral base units. A
+ * winning contract redeems 1:1, so this is also the maximum payout per card.
  */
-export const WRAPPER_CACHE_KEY = "flicky.wrapper.v3"
+export const SWIPE = {
+  QUANTITY: 1_000_000n,
+  /** How long a player has to decide a card, ms. */
+  WINDOW_MS: 15_000,
+} as const
 
-function readWrapperCache(owner: string): string | null {
-  try {
-    const raw = localStorage.getItem(WRAPPER_CACHE_KEY)
-    if (!raw) return null
-    const parsed = JSON.parse(raw) as Record<string, string>
-    return parsed[owner] ?? null
-  } catch {
-    return null
-  }
-}
-
-export function writeWrapperCache(owner: string, wrapperId: string): void {
-  try {
-    const raw = localStorage.getItem(WRAPPER_CACHE_KEY)
-    const parsed = raw ? (JSON.parse(raw) as Record<string, string>) : {}
-    parsed[owner] = wrapperId
-    localStorage.setItem(WRAPPER_CACHE_KEY, JSON.stringify(parsed))
-  } catch {
-    // localStorage unavailable / quota exceeded — degrades to server lookup.
-  }
-}
-
-export function invalidateWrapperCache(owner: string): void {
-  try {
-    const raw = localStorage.getItem(WRAPPER_CACHE_KEY)
-    if (!raw) return
-    const parsed = JSON.parse(raw) as Record<string, string>
-    delete parsed[owner]
-    localStorage.setItem(WRAPPER_CACHE_KEY, JSON.stringify(parsed))
-  } catch {
-    // ignore
-  }
+/**
+ * Time left in the current card's swipe window.
+ *
+ * Returns 0 once elapsed rather than a negative number, so callers can render
+ * a countdown without clamping at every call site.
+ */
+export function swipeWindowRemainingMs(
+  startedAtMs: number,
+  nowMs: number = Date.now()
+): number {
+  if (startedAtMs <= 0) return SWIPE.WINDOW_MS
+  return Math.max(0, startedAtMs + SWIPE.WINDOW_MS - nowMs)
 }
 
 /**
- * Resolve the AccountWrapper logically owned by `owner`.
+ * Time left on a specific card, given the duel start and the card's index.
  *
- * Resolution order:
- *   1. localStorage cache — wrapper ids are permanent per address.
- *   2. The Flicky server's `/manager` endpoint — the single source of truth
- *      (Plan 2 renamed its response field `managerId` → `wrapper`). A `null`
- *      answer is authoritative: "no wrapper exists yet".
- *
- * Returns:
- *   - a wrapper id string  → found (server or cache)
- *   - `null`               → no wrapper exists yet
- *   - `undefined`          → server unreachable / errored
+ * Cards are swiped in order, so card `i` opens `i` windows after the duel
+ * started.
  */
-export async function resolveWrapper(
-  owner: string
-): Promise<string | null | undefined> {
-  const cached = readWrapperCache(owner)
-  if (cached) return cached
-
-  try {
-    const res = await fetch(
-      apiUrl(`/manager?owner=${encodeURIComponent(owner)}`)
-    )
-    if (!res.ok) return undefined
-    const body = (await res.json()) as {
-      ok?: boolean
-      wrapper?: string | null
-    }
-    if (!body.ok) return undefined
-    if (!body.wrapper) return null
-    const id = normalizeSuiObjectId(body.wrapper)
-    writeWrapperCache(owner, id)
-    return id
-  } catch {
-    return undefined
-  }
-}
-
-// === Balances ===
-
-/** Return the player's spendable dUSDC balance in their wallet. */
-export async function getWalletDusdcBalance(
-  client: SuiClient,
-  address: string
-): Promise<bigint> {
-  const res = await client.core.getBalance({
-    owner: address,
-    coinType: DEEPBOOK.dusdcType,
-  })
-  return BigInt(res.balance.balance)
+export function cardSwipeRemainingMs(
+  startedAtMs: number,
+  cardIdx: number,
+  nowMs: number = Date.now()
+): number {
+  if (startedAtMs <= 0) return SWIPE.WINDOW_MS
+  const opensAt = startedAtMs + cardIdx * SWIPE.WINDOW_MS
+  return Math.max(0, opensAt + SWIPE.WINDOW_MS - nowMs)
 }
 
 /**
- * Resolve wrapper id + dUSDC AccountWrapper balance in one server
- * round-trip (`GET /manager` returns both). Unlike `resolveWrapper`, this
- * always hits the server — balance isn't cacheable client-side the way a
- * permanent wrapper id is — but it still warms the wrapper-id cache when
- * a wrapper is found.
+ * Format a collateral amount.
+ *
+ * Takes `decimals` so a caller holding a live market's own scale can pass it
+ * rather than inheriting the testnet default.
  */
+export function fmtDusdc(
+  base: bigint,
+  decimals: number = COLLATERAL_DECIMALS,
+  fractionDigits = 2
+): string {
+  const negative = base < 0n
+  const abs = negative ? -base : base
+  const scale = 10n ** BigInt(decimals)
+  const whole = abs / scale
+  const frac = (abs % scale).toString().padStart(decimals, "0")
+  const shown = fractionDigits > 0 ? `.${frac.slice(0, fractionDigits)}` : ""
+  return `${negative ? "-" : ""}${whole}${shown}`
+}
+
+/** Signed variant, with an explicit + so a gain reads as a gain. */
+export function fmtDusdcSigned(
+  base: bigint,
+  decimals: number = COLLATERAL_DECIMALS
+): string {
+  const s = fmtDusdc(base, decimals)
+  return base > 0n ? `+${s}` : s
+}
+
+/**
+ * Venue/contract addresses, under the old `DEEPBOOK` name so existing call
+ * sites keep resolving during the migration.
+ *
+ * On Somnia there is no protocol config, pool vault or account registry to
+ * reference — a market carries its own pool, and the adapter routes to it. Only
+ * the collateral address is still meaningful here.
+ */
+export { COLLATERAL_ADDRESS as DEEPBOOK_COLLATERAL } from "./chain"
+
+export const DEEPBOOK = {
+  /** Retained for display; there is no separate venue package on EVM. */
+  packageId: "",
+} as const
+
+/**
+ * There is no funding account to resolve on EVM — the wallet IS the account.
+ * Returns the address unchanged so legacy call sites keep working.
+ */
+export async function resolveWrapper(address: string): Promise<string> {
+  return address
+}
+
+/** No separate account state exists; the wallet's own balance is authoritative. */
 export async function fetchAccountState(
-  owner: string
-): Promise<{ wrapperId: string | null; balance: bigint }> {
-  const res = await fetch(apiUrl(`/manager?owner=${encodeURIComponent(owner)}`))
-  if (!res.ok) {
-    throw new Error(`fetchAccountState: /manager HTTP ${res.status}`)
-  }
-  const body = (await res.json()) as {
-    ok?: boolean
-    wrapper?: string | null
-    balance?: string | null
-  }
-  if (!body.ok) throw new Error("fetchAccountState: /manager returned !ok")
-  if (body.wrapper) {
-    const id = normalizeSuiObjectId(body.wrapper)
-    writeWrapperCache(owner, id)
-    return { wrapperId: id, balance: BigInt(body.balance ?? "0") }
-  }
-  return { wrapperId: null, balance: 0n }
-}
-
-/**
- * Wait for a `buildCreateAccountTx` transaction to finalize, then resolve
- * the newly created (deterministic) wrapper id. The `AccountWrapper`
- * address is derived purely from `(AccountRegistry, owner)`, but the
- * server's lookup needs the tx to have actually landed first — poll
- * `resolveWrapper` a few times to absorb propagation lag.
- */
-export async function waitForCreatedWrapper(
-  client: SuiClient,
-  digest: string,
-  owner: string
-): Promise<string> {
-  await client.core.waitForTransaction({ digest, include: { effects: true } })
-  for (let attempt = 0; attempt < 6; attempt++) {
-    const id = await resolveWrapper(owner)
-    if (id) return id
-    await new Promise((r) => setTimeout(r, 500))
-  }
-  throw new Error("account created but wrapper id not resolved yet — try again")
-}
-
-/**
- * Wait for a `buildDepositDusdcTx` transaction to finalize, then poll
- * `fetchAccountState` until the AccountWrapper balance reflects it. A
- * finalized tx digest doesn't guarantee `GET /manager`'s balance read
- * (server-side devInspect, a separate gRPC round-trip) sees the deposit
- * yet — same propagation-lag gap `waitForCreatedWrapper` absorbs for
- * wrapper creation. Without this, callers that flip straight to "ready"
- * on tx-signing success race the server's `queue_join` balance gate and
- * get a spurious `insufficient_balance` right after a real deposit.
- */
-export async function waitForManagerBalance(
-  client: SuiClient,
-  digest: string,
-  owner: string,
-  target: bigint
-): Promise<bigint> {
-  await client.core.waitForTransaction({ digest, include: { effects: true } })
-  for (let attempt = 0; attempt < 6; attempt++) {
-    const { balance } = await fetchAccountState(owner)
-    if (balance >= target) return balance
-    await new Promise((r) => setTimeout(r, 500))
-  }
-  throw new Error("deposit landed but balance not reflected yet — try again")
-}
-
-// === Tick derivation + market metadata ===
-
-/** Positive-infinity sentinel tick: `(1 << 30) - 1`. Open upper bound. */
-const POS_INF_TICK = (1n << 30n) - 1n
-
-/**
- * Derive the `(lower_tick, higher_tick]` pair for a binary swipe.
- *   - UP / YES  = `(K, +inf]`  → `lower = K/tick_size`, `higher = pos_inf_tick`
- *   - DOWN / NO = `[0, K]`     → `lower = 0`,            `higher = K/tick_size`
- */
-export function deriveTicks(strike: bigint, isUp: boolean, tickSize: bigint) {
-  const strikeTick = strike / tickSize
-  return isUp
-    ? { lowerTick: strikeTick, higherTick: POS_INF_TICK }
-    : { lowerTick: 0n, higherTick: strikeTick }
-}
-
-/** Cached `tick_size` per expiry market, keyed by `expiry_market_id`. */
-const tickSizeCache = new Map<string, bigint>()
-
-type MarketRow = { expiry_market_id?: string; tick_size?: string }
-
-/**
- * Fetch (and cache) an expiry market's `tick_size` from the predict indexer.
- * `GET {predictIndexerUrl}/markets` returns rows carrying `expiry_market_id`
- * and `tick_size` (a base-unit string, e.g. `"10000000"`).
- */
-export async function fetchMarketTickSize(marketId: string): Promise<bigint> {
-  const key = normalizeSuiObjectId(marketId)
-  const cached = tickSizeCache.get(key)
-  if (cached !== undefined) return cached
-
-  const res = await fetch(`${DEEPBOOK.predictIndexerUrl}/markets`)
-  if (!res.ok) {
-    throw new Error(`fetchMarketTickSize: /markets HTTP ${res.status}`)
-  }
-  const rows = (await res.json()) as MarketRow[]
-  const row = rows.find(
-    (r) =>
-      r.expiry_market_id && normalizeSuiObjectId(r.expiry_market_id) === key
-  )
-  if (!row?.tick_size) {
-    throw new Error(`fetchMarketTickSize: market ${marketId} not found`)
-  }
-  const tickSize = BigInt(row.tick_size)
-  tickSizeCache.set(key, tickSize)
-  return tickSize
-}
-
-// === PTB builders ===
-
-const U64_MAX = 2n ** 64n - 1n
-/**
- * Atomic staked swipe: mint a real 8-21 binary position on DeepBook AND record
- * the swipe in the Flicky duel, in ONE player-signed (sponsored) PTB.
- *
- * `quantity` is in u64 contracts. The premium is withdrawn from the player's
- * AccountWrapper dUSDC balance; the resulting `order_id` is chained into
- * `duel::record_swipe` so a genuine mint backs every swipe.
- *
- * Aborts (see reference gotchas):
- *   - `load_live_pricer` if any feed is stale or the market is past expiry
- *   - insufficient AccountWrapper dUSDC balance
- *   - flicky `EOutOfTurn` / standard swipe guards
- */
-export function buildStakedSwipeTx(args: {
-  duelId: string
-  wrapperId: string
-  marketId: string
-  strike: bigint
-  tickSize: bigint
-  cardIdx: number
-  isUp: boolean
-  quantity: bigint
-  /** The `Duel<T>`'s escrow coin type — must match the duel's own `T` (e.g.
-   * dUSDC for staked duels), NOT the account/premium coin type. */
-  stakeCoinType: string
-}): Transaction {
-  const tx = new Transaction()
-  const { lowerTick, higherTick } = deriveTicks(
-    args.strike,
-    args.isUp,
-    args.tickSize
-  )
-
-  // 1. Owner auth for the AccountWrapper (owner = tx sender).
-  const auth = tx.moveCall({
-    target: `${DEEPBOOK.accountPackageId}::account::generate_auth`,
-  })
-
-  // 2. Market-bound live pricer (once per tx, before any live mint).
-  const pricer = tx.moveCall({
-    target: `${DEEPBOOK.deepbookPredictPackageId}::expiry_market::load_live_pricer`,
-    arguments: [
-      tx.object(args.marketId),
-      tx.object(DEEPBOOK.protocolConfigId),
-      tx.object(DEEPBOOK.oracleRegistryId),
-      tx.object(DEEPBOOK.pythFeedId),
-      tx.object(DEEPBOOK.bsValueStoreId),
-      tx.object(DEEPBOOK.bsSviStoreId),
-      tx.object(CONFIG.CLOCK_ID),
-    ],
-  })
-
-  // 3. Mint the exact-quantity position. Returns a u256 order id.
-  const order = tx.moveCall({
-    target: `${DEEPBOOK.deepbookPredictPackageId}::expiry_market::mint_exact_quantity`,
-    arguments: [
-      tx.object(args.marketId),
-      tx.object(args.wrapperId),
-      auth,
-      tx.object(DEEPBOOK.protocolConfigId),
-      pricer,
-      tx.pure.u64(lowerTick),
-      tx.pure.u64(higherTick),
-      tx.pure.u64(args.quantity),
-      tx.pure.u64(U64_MAX), // max_cost: uncapped
-      tx.pure.u64(U64_MAX), // max_probability: uncapped
-      tx.object(DEEPBOOK.accumulatorRootId),
-      tx.object(CONFIG.CLOCK_ID),
-    ],
-  })
-
-  // 4. Record the swipe in the Flicky duel, chaining the mint's order id.
-  //    Clock is auto-injected by the codegen; we pass the leading 5 args.
-  tx.add(
-    duel.recordSwipe({
-      package: CONFIG.packageId,
-      arguments: [
-        args.duelId,
-        tx.pure.u64(args.cardIdx),
-        tx.pure.bool(args.isUp),
-        tx.pure.u64(args.quantity),
-        order,
-      ],
-      typeArguments: [args.stakeCoinType],
-    })
-  )
-
-  return tx
-}
-
-/**
- * One-time account onboarding: create the player's deterministic AccountWrapper
- * and share it. Funding is a separate step (`buildDepositDusdcTx`).
- */
-export function buildCreateAccountTx(): Transaction {
-  const tx = new Transaction()
-  const wrapper = tx.moveCall({
-    target: `${DEEPBOOK.accountPackageId}::account_registry::new`,
-    arguments: [tx.object(DEEPBOOK.accountRegistryId)],
-  })
-  tx.moveCall({
-    target: `${DEEPBOOK.accountPackageId}::account::share`,
-    arguments: [wrapper],
-  })
-  return tx
-}
-
-/**
- * Deposit dUSDC from the player's wallet into their AccountWrapper. The dUSDC
- * coin is sourced from the player's owned coins via `coinWithBalance`.
- */
-export function buildDepositDusdcTx(
-  wrapperId: string,
-  amount: bigint
-): Transaction {
-  const tx = new Transaction()
-  const auth = tx.moveCall({
-    target: `${DEEPBOOK.accountPackageId}::account::generate_auth`,
-  })
-  const coin = tx.add(
-    coinWithBalance({ balance: amount, type: DEEPBOOK.dusdcType })
-  )
-  tx.moveCall({
-    target: `${DEEPBOOK.accountPackageId}::account::deposit_funds`,
-    typeArguments: [DEEPBOOK.dusdcType],
-    arguments: [
-      tx.object(wrapperId),
-      auth,
-      coin,
-      tx.object(DEEPBOOK.accumulatorRootId),
-      tx.object(CONFIG.CLOCK_ID),
-    ],
-  })
-  return tx
-}
-
-/**
- * Withdraw dUSDC from the player's AccountWrapper back to their wallet.
- * `withdraw_funds<T>(wrapper, auth, amount, root, clock, ctx)` RETURNS the coin
- * (it is not auto-transferred), so the PTB transfers it to `recipient`.
- */
-export function buildWithdrawDusdcTx(
-  wrapperId: string,
-  amount: bigint,
-  recipient: string
-): Transaction {
-  const tx = new Transaction()
-  const auth = tx.moveCall({
-    target: `${DEEPBOOK.accountPackageId}::account::generate_auth`,
-  })
-  const coin = tx.moveCall({
-    target: `${DEEPBOOK.accountPackageId}::account::withdraw_funds`,
-    typeArguments: [DEEPBOOK.dusdcType],
-    arguments: [
-      tx.object(wrapperId),
-      auth,
-      tx.pure.u64(amount),
-      tx.object(DEEPBOOK.accumulatorRootId),
-      tx.object(CONFIG.CLOCK_ID),
-    ],
-  })
-  tx.transferObjects([coin], tx.pure.address(recipient))
-  return tx
-}
-
-// === Helpers ===
-
-export function fmtDusdc(microUnits: bigint): string {
-  const trimmed = (Number(microUnits) / 1e6).toFixed(4).replace(/\.?0+$/, "")
-  return `${trimmed} dUSDC`
+  address: string
+): Promise<{ wrapperId: string; balance: bigint }> {
+  return { wrapperId: address, balance: 0n }
 }

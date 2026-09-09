@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react"
 import { Link } from "react-router"
-import { useCurrentAccount } from "@mysten/dapp-kit-react"
+import { useCurrentAccount } from "@/hooks/use-wallet"
 import { apiUrl } from "@/lib/config"
 import { prefetchAvatarIcons } from "@/lib/avatar-store"
 import { PlayerAvatar } from "@/components/player-avatar"

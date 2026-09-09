@@ -1,6 +1,6 @@
 import { useEffect } from "react"
 import { createPortal } from "react-dom"
-import { useDAppKit } from "@mysten/dapp-kit-react"
+import { useWalletConnection } from "@/hooks/use-wallet"
 
 import { NetworkSetting } from "@/components/network-setting"
 import { PixelButton } from "@/components/pixel-button"
@@ -28,12 +28,12 @@ export interface MenuModalProps {
 
 export function MenuModal({ open, onClose }: MenuModalProps) {
   useModalSfx(open)
-  const dAppKit = useDAppKit()
+  const { disconnect } = useWalletConnection()
   const sfxVolume = useSfxVolume()
   const bgmVolume = useBgmVolume()
 
   const handleLogout = () => {
-    void dAppKit.disconnectWallet()
+    void disconnect()
     onClose()
   }
 

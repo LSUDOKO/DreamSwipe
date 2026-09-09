@@ -3,7 +3,7 @@ import type { CSSProperties } from "react"
 import { Navigate, useLocation, useNavigate } from "react-router"
 import { setPendingSwipe } from "@/lib/nav-transition"
 import { DeviceFrame } from "@/components/device-frame"
-import { useCurrentAccount } from "@mysten/dapp-kit-react"
+import { useCurrentAccount } from "@/hooks/use-wallet"
 
 import { AvatarPickerModal } from "@/components/avatar-picker-modal"
 import { BalanceChip } from "@/components/balance-chip"

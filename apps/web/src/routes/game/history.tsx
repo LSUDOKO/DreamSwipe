@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react"
 import { Link } from "react-router"
-import { useCurrentAccount } from "@mysten/dapp-kit-react"
-import { CONFIG, apiUrl } from "@/lib/config"
+import { useCurrentAccount } from "@/hooks/use-wallet"
+import { apiUrl } from "@/lib/config"
 import { buildRefundDuelTx, refundEligibility } from "@/lib/flicky"
 import { useFlickySign } from "@/lib/use-flicky-sign"
 import { fmtPnlPct } from "@/lib/pnl"
@@ -166,12 +166,8 @@ function MatchRow({ duel, address }: { duel: DuelRow; address: string }) {
     if (refunding) return
     playSfx("click")
     try {
-      await sign({
-        transaction: buildRefundDuelTx(
-          duel.id,
-          duel.stakeCoinType || CONFIG.stakeType
-        ),
-      })
+      if (!refundKind) return
+      await sign({ send: buildRefundDuelTx(duel.id, refundKind) })
       setRefunded(true)
     } catch {
       // Leave the button up — next tap retries.
@@ -209,7 +205,7 @@ function MatchRow({ duel, address }: { duel: DuelRow; address: string }) {
             >
               {refunding
                 ? "refunding…"
-                : refundKind === "cancel"
+                : refundKind === "cancel_pending"
                   ? "cancel"
                   : "claim refund"}
             </button>

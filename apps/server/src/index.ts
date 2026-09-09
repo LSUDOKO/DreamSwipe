@@ -20,6 +20,9 @@
  *                     KEEPER_ENABLED=false.
  */
 import { env } from "./env"
+import { handleBotArenaRequest } from "./bot-arena-api"
+import { handleRelayRequest } from "./relay-api"
+import { createSomniaKeeper, trackedDuels } from "./somnia-keeper"
 import { makeLogger } from "./log"
 import { CORS_HEADERS, corsPreflight, json } from "./lib/http"
 import { getSuiClient, decodeKeypair } from "./lib/sui"
@@ -142,6 +145,12 @@ const server = Bun.serve({
 
     if (req.method === "OPTIONS") return corsPreflight()
 
+    const botArena = await handleBotArenaRequest(req)
+    if (botArena) return botArena
+
+    const relayed = await handleRelayRequest(req)
+    if (relayed) return relayed
+
     if (url.pathname === "/health") {
       // Both reads hit Postgres — run them together and degrade
       // gracefully (null / error payload) so /health still answers even
@@ -198,6 +207,11 @@ const server = Bun.serve({
         predict,
         oracleStream: oracleStreamStats(),
         sponsorBalance: sponsorBalanceSnapshot(),
+        somnia: {
+          duelAddress: process.env.DREAMSWIPE_DUEL_ADDRESS ?? null,
+          keeper: somniaKeeper ? somniaKeeper.address : "disabled",
+          trackedDuels: trackedDuels().length,
+        },
       })
     }
 
@@ -314,6 +328,18 @@ startOracleStream()
 startChatPruneLoop()
 startSponsorBalanceMonitor()
 startPredictWatch()
+
+// Somnia settlement keeper. Reads outcomes from DreamDEX and writes
+// settleCard/finalize on chain. No-ops without DREAMSWIPE_DUEL_ADDRESS +
+// KEEPER_PRIVATE_KEY, so a read-only deployment boots cleanly.
+const somniaKeeper = createSomniaKeeper()
+if (somniaKeeper) {
+  somniaKeeper.start()
+} else {
+  log.warn(
+    "somnia keeper disabled — set DREAMSWIPE_DUEL_ADDRESS + KEEPER_PRIVATE_KEY"
+  )
+}
 
 if (env.keeperEnabled && env.keeperSecretKey && env.flickyPackageId) {
   try {

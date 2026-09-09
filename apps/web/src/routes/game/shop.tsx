@@ -1,10 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react"
 import type { CSSProperties } from "react"
-import {
-  useCurrentAccount,
-  useCurrentClient,
-  useDAppKit,
-} from "@mysten/dapp-kit-react"
+import { useCurrentAccount } from "@/hooks/use-wallet"
+import { useCurrentClient, useDAppKit } from "@mysten/dapp-kit-react"
 import { useOutletContext } from "react-router"
 
 import { PixelButton } from "@/components/pixel-button"

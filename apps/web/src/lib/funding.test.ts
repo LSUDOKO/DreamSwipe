@@ -40,7 +40,8 @@ test("requiredManagerBalance is always ≥ the MIN_MANAGER_BALANCE floor", () =>
 test("requiredManagerBalance tracks the generic stake + budget formula", () => {
   for (const stake of Object.values(STAKE_TIERS)) {
     const expected = stake + MAX_PREMIUM_BUDGET
-    const floored = expected > MIN_MANAGER_BALANCE ? expected : MIN_MANAGER_BALANCE
+    const floored =
+      expected > MIN_MANAGER_BALANCE ? expected : MIN_MANAGER_BALANCE
     expect(requiredManagerBalance(stake)).toBe(floored)
   }
 })

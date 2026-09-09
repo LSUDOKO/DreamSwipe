@@ -344,12 +344,12 @@ export interface DreamDexAdapter {
  * through once (see `apps/server/src/card-source.ts`).
  */
 export class VenueUnavailableError extends Error {
-  constructor(
-    message: string,
-    readonly cause?: unknown
-  ) {
+  override readonly cause?: unknown
+
+  constructor(message: string, cause?: unknown) {
     super(message)
     this.name = "VenueUnavailableError"
+    this.cause = cause
   }
 }
 

@@ -44,7 +44,7 @@ export function registerLimit(routeKey: string, cfg: RateLimitConfig): void {
  */
 export function consume(
   routeKey: string,
-  who: string,
+  who: string
 ): { ok: true } | { ok: false; retryMs: number } {
   const cfg = configs.get(routeKey)
   if (!cfg) return { ok: true } // unconfigured route = no limit
@@ -58,7 +58,10 @@ export function consume(
   }
   const elapsedMs = now - b.lastRefillMs
   if (elapsedMs > 0) {
-    b.tokens = Math.min(cfg.capacity, b.tokens + (elapsedMs / 1000) * cfg.refillPerSec)
+    b.tokens = Math.min(
+      cfg.capacity,
+      b.tokens + (elapsedMs / 1000) * cfg.refillPerSec
+    )
     b.lastRefillMs = now
   }
   if (b.tokens >= 1) {

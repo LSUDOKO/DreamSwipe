@@ -39,7 +39,7 @@ export function MatchButton({
           <>
             <span
               aria-hidden
-              className="ml-2 mr-1 h-8 w-0.5 shrink-0 bg-black/45 shadow-[1px_0_0_rgba(255,255,255,0.18)]"
+              className="mr-1 ml-2 h-8 w-0.5 shrink-0 bg-black/45 shadow-[1px_0_0_rgba(255,255,255,0.18)]"
             />
             <span className="inline-flex h-9 shrink-0 items-center justify-center gap-1 px-1.5 leading-none">
               {stake}

@@ -12,10 +12,10 @@
  */
 import { useEffect, useState, type ReactNode } from "react"
 import { Navigate, useNavigate, useParams } from "react-router"
-import { useCurrentAccount, useCurrentClient } from "@mysten/dapp-kit-react"
+import { useCurrentAccount } from "@/hooks/use-wallet"
+import { useConfig } from "wagmi"
 
 import { useFlickySocket } from "@/hooks/use-flicky-socket"
-import { resolveWrapper } from "@/lib/deepbook"
 import { fetchDuel } from "@/lib/flicky"
 import { ActiveDuel } from "./active-duel"
 import { NetworkGate } from "@/components/network-gate"
@@ -42,7 +42,7 @@ function PlayDuelInner() {
   const { duelId } = useParams<{ duelId: string }>()
   const navigate = useNavigate()
   const account = useCurrentAccount()
-  const client = useCurrentClient()
+  const config = useConfig()
   const { wsOpen, send, onMessage } = useFlickySocket(account?.address)
   const [load, setLoad] = useState<Load>({ kind: "loading" })
 
@@ -53,10 +53,9 @@ function PlayDuelInner() {
     let attempt = 0
     const attemptLoad = async () => {
       try {
-        const [duel, wrapperId] = await Promise.all([
-          fetchDuel(client, duelId),
-          resolveWrapper(account.address),
-        ])
+        // On EVM the wallet IS the account — there is no wrapper to resolve.
+        const duel = await fetchDuel(config, duelId)
+        const wrapperId = account.address
         if (cancelled) return
         // Finished duels are read-only — straight to the result screen.
         if (duel.status === "COMPLETE") {
@@ -99,7 +98,7 @@ function PlayDuelInner() {
     return () => {
       cancelled = true
     }
-  }, [duelId, account, client])
+  }, [duelId, account, config])
 
   if (!duelId) return <Navigate to="/game/home" replace />
   if (!account)

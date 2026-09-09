@@ -33,9 +33,12 @@ function measure(): DeviceFit {
   if (vw < MOBILE_MAX_W) return { mode: "mobile", scale: 1 }
   const raw = Math.min(
     (vw - MARGIN * 2) / DESIGN_W,
-    (vh - MARGIN * 2) / DESIGN_H,
+    (vh - MARGIN * 2) / DESIGN_H
   )
-  return { mode: "desktop", scale: Math.max(MIN_SCALE, Math.min(MAX_SCALE, raw)) }
+  return {
+    mode: "desktop",
+    scale: Math.max(MIN_SCALE, Math.min(MAX_SCALE, raw)),
+  }
 }
 
 export function useDeviceFit(): DeviceFit {

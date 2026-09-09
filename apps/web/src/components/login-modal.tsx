@@ -1,84 +1,37 @@
-import { useEffect, useState, type CSSProperties } from "react"
+/**
+ * Sign-in modal.
+ *
+ * ── What changed in the Somnia migration ────────────────────────────────────
+ *
+ * The Sui build offered "continue with Google" via Enoki zkLogin, which
+ * created a wallet from an OAuth identity. **zkLogin has no EVM equivalent**,
+ * so that option is gone rather than faked — DreamSwipe now connects an
+ * injected EVM wallet (MetaMask, Rabby, …).
+ *
+ * The copy says so plainly. Showing a Google button that silently did
+ * something else would be worse than losing the option.
+ */
+import { useEffect } from "react"
 import { createPortal } from "react-dom"
-import { useDAppKit, useWallets } from "@mysten/dapp-kit-react"
-import { isGoogleWallet } from "@mysten/enoki"
-
 import { PixelButton } from "@/components/pixel-button"
+import { useWalletConnection } from "@/hooks/use-wallet"
+import { somniaTestnet } from "@/lib/chain"
 
-const SLUSH_INSTALL_URL = "https://slush.app/"
+const WALLET_BRAND_STYLE = {
+  "--pixel-face": "#f6851b",
+  "--pixel-face-hi": "#ffa64d",
+  "--pixel-face-lo": "#c96a12",
+} as React.CSSProperties
 
-/**
- * Brand-color overrides for the pixel-cabinet button. Each instance
- * gets its own --btn-bg / --btn-highlight / --btn-text-shadow via
- * inline style, set as CSS custom properties.
- */
-const GOOGLE_BRAND_STYLE = {
-  "--btn-bg": "#ffffff",
-  "--btn-highlight": "#ffffff",
-  "--btn-text-shadow": "none",
-} as CSSProperties
-
-const SLUSH_BRAND_STYLE = {
-  "--btn-bg": "#4094fb",
-  "--btn-highlight": "#7eb6ff",
-  "--btn-text-shadow": "0 1px 0 rgba(0, 0, 0, 0.35)",
-} as CSSProperties
-
-/**
- * Sign-in popup. Mounted via createPortal so it overlays the mobile
- * frame AND the checker background outside it — anything underneath
- * gets dimmed by the backdrop regardless of stacking context.
- *
- * Closes on Escape, on backdrop click, or via the X button.
- *
- * Two sign-in paths:
- *   - Google (Enoki zkLogin) — registered via registerEnokiWallets in
- *     main.tsx, found here via isGoogleWallet().
- *   - Slush — a browser-extension Sui wallet, detected via the wallet-
- *     standard registry. Falls back to an install link if not present.
- */
-export interface LoginModalProps {
+export function LoginModal({
+  open,
+  onClose,
+}: {
   open: boolean
   onClose: () => void
-}
-
-export function LoginModal({ open, onClose }: LoginModalProps) {
-  const wallets = useWallets()
-  const dAppKit = useDAppKit()
-  const [isConnecting, setIsConnecting] = useState(false)
-
-  const googleWallet = wallets.find(isGoogleWallet)
-  const slushWallet = wallets.find(
-    (w) =>
-      w.name.toLowerCase().includes("slush") ||
-      // Older versions of Slush still reported as "Sui Wallet".
-      w.name === "Sui Wallet",
-  )
-
-  const connectAndClose = async (wallet: (typeof wallets)[number]) => {
-    setIsConnecting(true)
-    try {
-      await dAppKit.connectWallet({ wallet })
-      onClose()
-    } catch {
-      // user cancelled the popup or the connect failed — leave the modal
-      // open so they can retry.
-    } finally {
-      setIsConnecting(false)
-    }
-  }
-
-  const handleGoogle = () => {
-    if (googleWallet) void connectAndClose(googleWallet)
-  }
-
-  const handleSlush = () => {
-    if (!slushWallet) {
-      window.open(SLUSH_INSTALL_URL, "_blank", "noopener,noreferrer")
-      return
-    }
-    void connectAndClose(slushWallet)
-  }
+}) {
+  const { connect, isPending, error, hasWallet, wrongNetwork, switchToSomnia } =
+    useWalletConnection()
 
   useEffect(() => {
     if (!open) return
@@ -94,6 +47,20 @@ export function LoginModal({ open, onClose }: LoginModalProps) {
   }, [open, onClose])
 
   if (!open) return null
+
+  const handleConnect = async () => {
+    if (!hasWallet) {
+      window.open("https://metamask.io/download/", "_blank", "noopener")
+      return
+    }
+    try {
+      await connect()
+      onClose()
+    } catch {
+      // wagmi surfaces the reason through `error`; a user-rejected connect is
+      // normal and must not crash the modal.
+    }
+  }
 
   return createPortal(
     <div
@@ -111,71 +78,63 @@ export function LoginModal({ open, onClose }: LoginModalProps) {
           type="button"
           onClick={onClose}
           aria-label="close"
-          className="absolute right-3 top-3 grid size-7 place-items-center text-base text-white/55 hover:text-white"
+          className="absolute top-3 right-3 grid size-7 place-items-center text-base text-white/55 hover:text-white"
         >
           ✕
         </button>
 
-        <header className="px-6 pb-4 pt-7 text-center">
+        <header className="px-6 pt-7 pb-4 text-center">
           <h2
             id="login-title"
-            className="text-base uppercase tracking-[0.18em]"
+            className="text-base tracking-[0.18em] uppercase"
           >
-            sign in to flicky
+            sign in to dreamswipe
           </h2>
-          <p className="mt-1 text-xs uppercase tracking-[0.18em] text-white/45">
-            zklogin via enoki
+          <p className="mt-1 text-xs tracking-[0.18em] text-white/45 uppercase">
+            somnia shannon testnet
           </p>
         </header>
 
         <div className="flex flex-col gap-3 px-6 pb-6">
           <PixelButton
-            onClick={handleGoogle}
-            disabled={!googleWallet || isConnecting}
-            style={GOOGLE_BRAND_STYLE}
-            className="h-12 !text-neutral-900"
-          >
-            <span className="flex w-full items-center justify-center gap-2">
-              <img
-                src="/login_icons/google_icon.png"
-                alt=""
-                aria-hidden
-                className="size-5"
-              />
-              continue with google
-            </span>
-          </PixelButton>
-
-          <div className="my-1 flex items-center gap-3 text-[10px] uppercase tracking-[0.2em] text-white/35">
-            <span className="h-px flex-1 bg-white/15" />
-            or
-            <span className="h-px flex-1 bg-white/15" />
-          </div>
-
-          <PixelButton
-            onClick={handleSlush}
-            disabled={isConnecting}
-            style={SLUSH_BRAND_STYLE}
+            onClick={handleConnect}
+            disabled={isPending}
+            style={WALLET_BRAND_STYLE}
             className="h-12"
           >
             <span className="flex w-full items-center justify-center gap-2">
-              <img
-                src="/login_icons/slush_icon.png"
-                alt=""
-                aria-hidden
-                className="size-5"
-              />
-              {slushWallet ? "continue with slush" : "install slush"}
+              {isPending
+                ? "connecting…"
+                : hasWallet
+                  ? "connect wallet"
+                  : "install a wallet"}
             </span>
           </PixelButton>
 
-          <p className="mt-2 text-center text-[10px] uppercase tracking-[0.18em] text-white/35">
-            google uses zklogin — your account stays with google. slush is a sui wallet extension.
+          {wrongNetwork && (
+            // Connected but on another chain: every read would come back empty,
+            // so say why instead of rendering a blank app.
+            <PixelButton onClick={() => void switchToSomnia()} className="h-12">
+              switch to somnia testnet
+            </PixelButton>
+          )}
+
+          {error && (
+            <p className="text-center text-[10px] tracking-[0.18em] text-red-300/80 uppercase">
+              {error.message.slice(0, 90)}
+            </p>
+          )}
+
+          <p className="mt-2 text-center text-[10px] tracking-[0.18em] text-white/35 uppercase">
+            {hasWallet
+              ? `connects an evm wallet on chain ${somniaTestnet.id}. testnet only — no real funds.`
+              : "no evm wallet detected. install metamask or another injected wallet to play."}
           </p>
         </div>
       </div>
     </div>,
-    document.body,
+    document.body
   )
 }
 
+export default LoginModal

@@ -1,77 +1,122 @@
-import { useQuery, useQueryClient } from "@tanstack/react-query"
-import { useCurrentAccount, useCurrentClient } from "@mysten/dapp-kit-react"
-
-import { DUSDC_COIN_TYPE, SUI_COIN_TYPE, fetchCoinBalance } from "@/lib/swap"
-import { fetchAccountState } from "@/lib/deepbook"
-import { DUELS_ENABLED } from "@/lib/config"
-
-const BALANCE_ROOT_KEY = "wallet-balance"
-const MANAGER_BALANCE_KEY = "manager-balance"
-
 /**
- * Live balance hook backed by react-query. Polls every 5s while the
- * component is mounted and shares cache across every consumer, so the
- * header chips, profile stats, swap screen, and deposit modal all
- * stay in sync. Call useInvalidateWalletBalances() after any action
- * that should produce an immediate refresh (deposit, swap, etc.).
+ * Player balances.
+ *
+ * ── What the Somnia migration removed ───────────────────────────────────────
+ *
+ * On Sui a player had TWO balances: coins in their wallet, and a separate
+ * DeepBook `AccountWrapper` they had to create and fund before they could
+ * play. That second account is gone — DreamDEX event contracts settle against
+ * a plain ERC-20 the wallet already holds, so there is nothing to derive, no
+ * wrapper to create, and no deposit step before a first duel.
+ *
+ * The hook keeps returning a `managerId` field (always null) so the handful of
+ * call sites that branch on "does this player have an account yet" keep
+ * compiling during the migration. Those branches are now always false, which
+ * is correct: on Somnia every connected wallet is ready to play.
  */
-export function useWalletBalance(coinType: string | null) {
+import {
+  useCollateralBalance,
+  useCurrentAccount,
+  useNativeBalance,
+} from "./use-wallet"
+
+export interface WalletBalances {
+  /** Collateral (tUSDC) in whole units, for display. */
+  balance: number
+  /** Raw collateral, base units — use this for any arithmetic. */
+  balanceBase: bigint
+  /** Decimals as reported by the token itself. */
+  decimals: number
+  /** Native STT for gas, in whole units. */
+  gas: number
+  /**
+   * Always null on EVM. Retained so legacy "needs an account" branches keep
+   * type-checking; there is no funding account to have.
+   */
+  managerId: string | null
+  isLoading: boolean
+  refetch: () => void
+}
+
+export function useWalletBalances(): WalletBalances {
   const account = useCurrentAccount()
-  const client = useCurrentClient()
-  return useQuery({
-    queryKey: [BALANCE_ROOT_KEY, account?.address ?? null, coinType],
-    queryFn: async () => {
-      if (!account || !coinType) return 0
-      return fetchCoinBalance(client, account.address, coinType)
-    },
-    enabled: !!account && !!coinType,
-    refetchInterval: 5_000,
-    staleTime: 2_000,
-  })
-}
+  const collateral = useCollateralBalance()
+  const native = useNativeBalance()
 
-export function useSuiBalance() {
-  return useWalletBalance(SUI_COIN_TYPE)
+  return {
+    balance: Number(collateral.value) / 10 ** collateral.decimals,
+    balanceBase: collateral.value,
+    decimals: collateral.decimals,
+    gas: Number(native.value) / 10 ** native.decimals,
+    managerId: null,
+    isLoading: Boolean(account) && (collateral.isLoading || native.isLoading),
+    refetch: () => {
+      void collateral.refetch()
+      void native.refetch()
+    },
+  }
 }
 
 /**
- * dUSDC balance. Networks without a dUSDC deployment report 0 rather than
- * querying a coin type that doesn't exist there — the header chip then
- * renders a truthful 0.00 instead of an error state.
+ * Whether this player can actually transact.
+ *
+ * Gas and collateral are reported separately on purpose: a player holding
+ * plenty of tUSDC but no STT cannot send a transaction, and conflating the two
+ * produces a baffling "why did nothing happen" failure.
  */
-export function useDusdcBalance() {
-  return useWalletBalance(DUELS_ENABLED ? DUSDC_COIN_TYPE : null)
-}
-
-export function useInvalidateWalletBalances() {
-  const qc = useQueryClient()
-  return () =>
-    qc.invalidateQueries({
-      predicate: (q) =>
-        q.queryKey[0] === BALANCE_ROOT_KEY ||
-        q.queryKey[0] === MANAGER_BALANCE_KEY,
-    })
+export function useCanTransact(): {
+  hasGas: boolean
+  hasCollateral: boolean
+  ready: boolean
+} {
+  const { gas, balanceBase } = useWalletBalances()
+  const hasGas = gas > 0
+  const hasCollateral = balanceBase > 0n
+  return { hasGas, hasCollateral, ready: hasGas }
 }
 
 /**
- * Predict AccountWrapper dUSDC balance, scaled to the same dUSDC base
- * unit (1e6 micro-units → human dUSDC) as `useDusdcBalance`. Returns the
- * float for direct UI rendering, and `managerId` (the wrapper id — kept
- * under this name so existing call sites don't need to churn) for
- * callers that need to build deposit/withdraw PTBs.
+ * Collateral balance in whole units.
+ *
+ * Kept under its Sui-era name so header/layout call sites migrate unchanged.
+ * On Somnia there is only ONE balance — the wallet's — so this and
+ * `useManagerBalance` intentionally report the same number rather than
+ * pretending a second funding account still exists.
  */
-export function useManagerBalance() {
-  const account = useCurrentAccount()
-  return useQuery({
-    queryKey: [MANAGER_BALANCE_KEY, account?.address ?? null],
-    queryFn: async () => {
-      if (!account) return { managerId: null as string | null, balance: 0 }
-      const { wrapperId, balance } = await fetchAccountState(account.address)
-      return { managerId: wrapperId, balance: Number(balance) / 1e6 }
-    },
-    // No Predict deployment → no AccountRegistry to derive a wrapper from.
-    enabled: !!account && DUELS_ENABLED,
-    refetchInterval: 5_000,
-    staleTime: 2_000,
-  })
+export function useDusdcBalance(): { data: number; isLoading: boolean } {
+  const { balance, isLoading } = useWalletBalances()
+  return { data: balance, isLoading }
+}
+
+/**
+ * Legacy alias for the old DeepBook "manager" balance.
+ *
+ * There is no manager account on EVM. This returns the wallet balance and a
+ * null `managerId`, so any "create your account first" branch is permanently
+ * false — which is the truth: a connected wallet is already ready to play.
+ */
+export function useManagerBalance(): {
+  data: { managerId: string | null; balance: number }
+  isLoading: boolean
+} {
+  const { balance, isLoading } = useWalletBalances()
+  return { data: { managerId: null, balance }, isLoading }
+}
+
+/**
+ * Native gas balance, under its Sui-era name.
+ *
+ * The token is STT on Shannon (SOMI is mainnet), but the call sites only care
+ * that it is "the coin that pays for gas", so the name is kept for the
+ * migration.
+ */
+export function useSuiBalance(): { data: number; isLoading: boolean } {
+  const { gas, isLoading } = useWalletBalances()
+  return { data: gas, isLoading }
+}
+
+/** Force a balance refetch after a transaction lands. */
+export function useInvalidateWalletBalances(): () => void {
+  const { refetch } = useWalletBalances()
+  return refetch
 }

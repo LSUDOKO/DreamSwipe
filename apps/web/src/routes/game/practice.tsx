@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactNode } from "react"
 import { Link, useNavigate } from "react-router"
-import { useCurrentAccount } from "@mysten/dapp-kit-react"
+import { useCurrentAccount } from "@/hooks/use-wallet"
 import { useFlickySocket } from "@/hooks/use-flicky-socket"
 import {
   BOT_ADDRESS,

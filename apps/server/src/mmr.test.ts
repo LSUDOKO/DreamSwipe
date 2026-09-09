@@ -35,7 +35,13 @@ describe.skipIf(!HAS_TEST_DB)("mmr", () => {
     test("favourite winning gains less than an upset victory", async () => {
       // P0 starts much higher (1400), so beating P1 (1000) is "expected".
       await db.upsertPlayerRating({
-        address: "0xa", rating: 1400, gamesPlayed: 0, wins: 0, losses: 0, ties: 0, lastUpdatedMs: 0,
+        address: "0xa",
+        rating: 1400,
+        gamesPlayed: 0,
+        wins: 0,
+        losses: 0,
+        ties: 0,
+        lastUpdatedMs: 0,
       })
       const fav = await mmr.applyDuelOutcome("0xa", "0xb", "p0_win")
       const favGain = fav.p0After - fav.p0Before
@@ -43,7 +49,13 @@ describe.skipIf(!HAS_TEST_DB)("mmr", () => {
       // Reset, then have low-rated P1 win an upset.
       await db.getSql()`DELETE FROM player_rating`
       await db.upsertPlayerRating({
-        address: "0xa", rating: 1400, gamesPlayed: 0, wins: 0, losses: 0, ties: 0, lastUpdatedMs: 0,
+        address: "0xa",
+        rating: 1400,
+        gamesPlayed: 0,
+        wins: 0,
+        losses: 0,
+        ties: 0,
+        lastUpdatedMs: 0,
       })
       const upset = await mmr.applyDuelOutcome("0xa", "0xb", "p1_win")
       const upsetGain = upset.p1After - upset.p1Before
@@ -74,10 +86,22 @@ describe.skipIf(!HAS_TEST_DB)("mmr", () => {
 
     test("matches inside the window, ignores outside", async () => {
       await db.upsertPlayerRating({
-        address: "0xclose", rating: 1100, gamesPlayed: 1, wins: 0, losses: 0, ties: 0, lastUpdatedMs: 0,
+        address: "0xclose",
+        rating: 1100,
+        gamesPlayed: 1,
+        wins: 0,
+        losses: 0,
+        ties: 0,
+        lastUpdatedMs: 0,
       })
       await db.upsertPlayerRating({
-        address: "0xfar", rating: 1600, gamesPlayed: 1, wins: 0, losses: 0, ties: 0, lastUpdatedMs: 0,
+        address: "0xfar",
+        rating: 1600,
+        gamesPlayed: 1,
+        wins: 0,
+        losses: 0,
+        ties: 0,
+        lastUpdatedMs: 0,
       })
       const now = Date.now()
       const pick = await mmr.findClosestOpponent(1000, now, [
@@ -89,7 +113,13 @@ describe.skipIf(!HAS_TEST_DB)("mmr", () => {
 
     test("expanding window eventually catches a far opponent", async () => {
       await db.upsertPlayerRating({
-        address: "0xfar", rating: 1600, gamesPlayed: 1, wins: 0, losses: 0, ties: 0, lastUpdatedMs: 0,
+        address: "0xfar",
+        rating: 1600,
+        gamesPlayed: 1,
+        wins: 0,
+        losses: 0,
+        ties: 0,
+        lastUpdatedMs: 0,
       })
       const now = Date.now()
       // Both queued 60s ago → window = 200 + 60*20 = 1400 (covers ±600 gap)

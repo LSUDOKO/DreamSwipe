@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { Link, useParams } from "react-router"
-import { useCurrentAccount } from "@mysten/dapp-kit-react"
-import { CONFIG, apiUrl } from "@/lib/config"
+import { useCurrentAccount } from "@/hooks/use-wallet"
+import { apiUrl } from "@/lib/config"
 import { useFlickySocket } from "@/hooks/use-flicky-socket"
 import { fmtPnlPct, tickCardPnl, type SwipeLite } from "@/lib/pnl"
 import { duelUnsettleable, missingSides } from "@/lib/duel-state"
@@ -415,12 +415,8 @@ export default function DuelView() {
     if (refunding) return
     playSfx("click")
     try {
-      await signRefund({
-        transaction: buildRefundDuelTx(
-          duel.id,
-          duel.stakeCoinType || CONFIG.stakeType
-        ),
-      })
+      if (!refundKind) return
+      await signRefund({ send: buildRefundDuelTx(duel.id, refundKind) })
       setRefunded(true)
     } catch {
       // Leave the button up — next tap retries.

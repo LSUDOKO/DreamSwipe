@@ -61,11 +61,19 @@ export class SingleFlightCache<T> {
   private cached: CachedSweep<T> | null = null
   private inFlight: Promise<T> | null = null
 
+  private readonly produce: () => Promise<T>
+  private readonly ttlMs: number
+  private readonly now: () => number
+
   constructor(
-    private readonly produce: () => Promise<T>,
-    private readonly ttlMs: number,
-    private readonly now: () => number = Date.now
-  ) {}
+    produce: () => Promise<T>,
+    ttlMs: number,
+    now: () => number = Date.now
+  ) {
+    this.produce = produce
+    this.ttlMs = ttlMs
+    this.now = now
+  }
 
   /** Cached value if fresh, otherwise produce one (de-duplicating callers). */
   async get(): Promise<T> {
@@ -139,10 +147,16 @@ export interface IdentityEntry {
 export class MarketIdentityCache {
   private readonly entries = new Map<string, IdentityEntry>()
 
+  private readonly ttlMs: number
+  private readonly now: () => number
+
   constructor(
-    private readonly ttlMs: number = DEFAULT_IDENTITY_TTL_MS,
-    private readonly now: () => number = Date.now
-  ) {}
+    ttlMs: number = DEFAULT_IDENTITY_TTL_MS,
+    now: () => number = Date.now
+  ) {
+    this.ttlMs = ttlMs
+    this.now = now
+  }
 
   set(market: EventMarket): void {
     this.entries.set(market.id, { market, fetchedAtMs: this.now() })

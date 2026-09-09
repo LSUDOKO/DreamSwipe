@@ -1,5 +1,5 @@
 import { Link } from "react-router"
-import { useCurrentAccount } from "@mysten/dapp-kit-react"
+import { useCurrentAccount } from "@/hooks/use-wallet"
 import { MyMatchTile } from "@/components/my-match-tile"
 import { PlayerHeroCard } from "@/components/player-hero-card"
 import { SeasonBanner } from "@/components/season-banner"
