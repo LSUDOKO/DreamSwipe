@@ -1,423 +1,124 @@
-import { useCallback, useEffect, useMemo, useState } from "react"
-import type { CSSProperties } from "react"
-import { useCurrentAccount } from "@/hooks/use-wallet"
-import { useCurrentClient, useDAppKit } from "@mysten/dapp-kit-react"
+/**
+ * Funding screen (formerly "shop").
+ *
+ * ── What this replaced ──────────────────────────────────────────────────────
+ *
+ * On Sui this was a SUI ↔ dUSDC AMM swap, because a zkLogin wallet arrived
+ * holding gas but no stake token and needed a way to convert. On Somnia the
+ * faucet hands out BOTH tokens directly — STT for gas and tUSDC for
+ * collateral — so an in-app swap solves a problem that no longer exists.
+ *
+ * Rather than ship a swap against liquidity DreamSwipe does not own (and must
+ * not imply is official DreamDEX liquidity), this shows real balances and
+ * points at the real faucet.
+ */
 import { useOutletContext } from "react-router"
-
 import { PixelButton } from "@/components/pixel-button"
 import type { GameOutletContext } from "./layout"
+import { useCurrentAccount } from "@/hooks/use-wallet"
+import { useWalletBalances } from "@/hooks/use-wallet-balances"
 import {
-  useDusdcBalance,
-  useInvalidateWalletBalances,
-  useSuiBalance,
-} from "@/hooks/use-wallet-balances"
-import {
-  DUSDC_COIN_TYPE,
-  DUSDC_DECIMALS,
-  SUI_COIN_TYPE,
-  SUI_DECIMALS,
-  buildSwapTx,
-  estimateSwapOutput,
-  fetchPoolReserves,
-  isSwapConfigured,
-  toRawAmount,
-  type PoolReserves,
-  type SwapDirection,
-} from "@/lib/swap"
-import { NetworkGate } from "@/components/network-gate"
-import { DUELS_ENABLED } from "@/lib/config"
+  COLLATERAL_SYMBOL,
+  addressUrl,
+  formatCollateral,
+  shortAddress,
+} from "@/lib/chain"
 
-const BLUE_BRAND_STYLE = {
-  "--btn-bg": "#4094fb",
-  "--btn-highlight": "#7eb6ff",
-} as CSSProperties
+const FAUCET_URL = "https://t.me/+XHq0F0JXMyhmMzM0"
 
-const SUI_ICON = "/tokens/sui.png"
-const DUSDC_ICON = "/tokens/usdc-icon.png"
-
-interface TokenMeta {
-  symbol: string
-  icon: string
-  coinType: string
-  decimals: number
-}
-
-const SUI_TOKEN: TokenMeta = {
-  symbol: "SUI",
-  icon: SUI_ICON,
-  coinType: SUI_COIN_TYPE,
-  decimals: SUI_DECIMALS,
-}
-const DUSDC_TOKEN: TokenMeta = {
-  symbol: "dUSDC",
-  icon: DUSDC_ICON,
-  coinType: DUSDC_COIN_TYPE,
-  decimals: DUSDC_DECIMALS,
-}
-
-/**
- * /game/shop — pixel-art AMM swap card for SUI ↔ dUSDC. The Predict
- * deck stakes are dUSDC, but zkLogin wallets only hold SUI from the
- * faucet, so this screen is the bridge. Constant-product pricing,
- * reserves live-read on mount and after each swap.
- */
-/**
- * Route entry. Networks without the contracts this screen needs render the
- * gate instead — `DUELS_ENABLED` is a module-level constant resolved once at
- * boot, so this branch is stable for the life of the page and the inner
- * component's hooks are never conditionally skipped.
- */
 export default function GameShop() {
-  if (!DUELS_ENABLED)
-    return (
-      <NetworkGate
-        what="the shop"
-        reason="the sui/dusdc swap contract is only deployed on testnet."
-      />
-    )
-  return <GameShopInner />
-}
-
-function GameShopInner() {
   const account = useCurrentAccount()
-  const client = useCurrentClient()
-  const dAppKit = useDAppKit()
-  const { openLogin } = useOutletContext<GameOutletContext>()
+  useOutletContext<GameOutletContext>()
+  const { balanceBase, decimals, gas, isLoading, refetch } = useWalletBalances()
 
-  const [direction, setDirection] = useState<SwapDirection>("sui_to_dusdc")
-  const [inputAmount, setInputAmount] = useState("1")
-  const [slippagePct, setSlippagePct] = useState("1")
-  const [pool, setPool] = useState<PoolReserves | null>(null)
-  const { data: walletSui = 0 } = useSuiBalance()
-  const { data: walletDusdc = 0 } = useDusdcBalance()
-  const invalidateBalances = useInvalidateWalletBalances()
-  const [busy, setBusy] = useState(false)
-  const [status, setStatus] = useState<{
-    kind: "ok" | "err"
-    msg: string
-  } | null>(null)
-
-  const fromToken = direction === "sui_to_dusdc" ? SUI_TOKEN : DUSDC_TOKEN
-  const toToken = direction === "sui_to_dusdc" ? DUSDC_TOKEN : SUI_TOKEN
-  const fromBalance = direction === "sui_to_dusdc" ? walletSui : walletDusdc
-  const toBalance = direction === "sui_to_dusdc" ? walletDusdc : walletSui
-
-  const inputNum = parseFloat(inputAmount) || 0
-  const slipNum = Math.max(0, parseFloat(slippagePct) || 0)
-
-  const estimatedOut = useMemo(() => {
-    if (!pool) return 0
-    return estimateSwapOutput(pool, direction, inputNum)
-  }, [pool, direction, inputNum])
-  const minOut = estimatedOut * (1 - slipNum / 100)
-
-  const refreshPool = useCallback(async () => {
-    if (!isSwapConfigured()) return
-    try {
-      const p = await fetchPoolReserves(client, account?.address)
-      setPool(p)
-    } catch (err) {
-      console.error("pool refresh failed", err)
-    }
-  }, [client, account])
-
-  useEffect(() => {
-    refreshPool()
-  }, [refreshPool])
-
-  const handleSwap = async () => {
-    if (!account || !pool || inputNum <= 0 || busy) return
-    setBusy(true)
-    setStatus(null)
-    try {
-      const inputRaw = toRawAmount(inputNum, fromToken.decimals)
-      const minOutRaw = toRawAmount(minOut, toToken.decimals)
-      const tx = await buildSwapTx(
-        client,
-        account.address,
-        direction,
-        inputRaw,
-        minOutRaw
-      )
-      const result = await dAppKit.signAndExecuteTransaction({
-        transaction: tx,
-      })
-      if (result.$kind !== "Transaction") {
-        throw new Error("swap failed")
-      }
-      setStatus({
-        kind: "ok",
-        msg: `swap complete — ${result.Transaction.digest.slice(0, 10)}…`,
-      })
-      setTimeout(() => {
-        refreshPool()
-        invalidateBalances()
-      }, 1500)
-    } catch (err) {
-      setStatus({ kind: "err", msg: String((err as Error).message || err) })
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  if (!isSwapConfigured()) {
+  if (!account) {
     return (
-      <div className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center">
-        <img
-          src="/icons/clear.png"
-          alt=""
-          aria-hidden
-          className="size-14 [image-rendering:pixelated]"
-        />
-        <p className="text-base tracking-[0.15em] text-white uppercase">
-          swap unavailable
-        </p>
-        <p className="text-sm text-white/55">
-          set VITE_SWAP_POOL_ID in .env.local
+      <div className="mx-auto w-full max-w-lg px-4 pt-10 text-center font-pixel text-white/60">
+        <p className="text-xs tracking-[0.18em] uppercase">
+          connect a wallet to see your balances
         </p>
       </div>
     )
   }
 
   return (
-    <div className="flex flex-col gap-4 px-4 py-4">
-      <header className="flex items-center justify-between">
-        <h2 className="flex items-baseline gap-2 text-4xl tracking-[0.2em] text-white uppercase">
-          swap
-          <span className="text-sm tracking-[0.12em] text-white/45 normal-case">
-            (for testnet)
-          </span>
-        </h2>
-        <button
-          type="button"
-          onClick={() => {
-            refreshPool()
-            invalidateBalances()
-          }}
-          aria-label="refresh"
-          className="grid size-8 place-items-center rounded-md text-white/55 hover:text-white"
-        >
-          <img
-            src="/icons/arrow_refresh.png"
-            alt=""
-            aria-hidden
-            className="size-5 [image-rendering:pixelated]"
-          />
-        </button>
+    <div className="mx-auto w-full max-w-lg px-4 pt-6 pb-24 font-pixel text-white">
+      <header className="mb-6">
+        <h1 className="text-lg tracking-[0.18em] uppercase">funding</h1>
+        <p className="mt-1 text-xs tracking-[0.15em] text-white/45 uppercase">
+          somnia shannon testnet
+        </p>
       </header>
 
-      <div className="relative flex flex-col gap-1">
-        <TokenInputCard
-          label="you pay"
-          token={fromToken}
-          balance={fromBalance}
-          value={inputAmount}
-          onChange={setInputAmount}
-          onMax={() => setInputAmount(fromBalance.toString())}
-        />
-        <DirectionToggle
-          disabled={busy}
-          onClick={() =>
-            setDirection((d) =>
-              d === "sui_to_dusdc" ? "dusdc_to_sui" : "sui_to_dusdc"
-            )
+      <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-5">
+        <Row
+          label="collateral"
+          value={
+            isLoading
+              ? "…"
+              : `${formatCollateral(balanceBase, decimals)} ${COLLATERAL_SYMBOL}`
           }
+          hint="stakes staked duels"
         />
-        <TokenInputCard
-          label="you receive"
-          token={toToken}
-          balance={toBalance}
-          value={estimatedOut > 0 ? estimatedOut.toFixed(6) : "0.0"}
-          readOnly
+        <div className="my-3 h-px bg-white/10" />
+        <Row
+          label="gas"
+          value={isLoading ? "…" : `${gas.toFixed(4)} STT`}
+          hint="pays for on-chain actions"
         />
       </div>
 
-      <div className="rounded-xl bg-white/5 px-4 py-3">
-        <div className="flex items-center justify-between text-lg">
-          <span className="tracking-wider text-white/55 uppercase">
-            slippage
-          </span>
-          <div className="flex items-center gap-1.5">
-            <input
-              type="number"
-              value={slippagePct}
-              onChange={(e) => {
-                const v = e.target.value
-                if (v === "" || parseFloat(v) >= 0) setSlippagePct(v)
-              }}
-              min={0}
-              step="any"
-              className="w-14 rounded-md bg-black/30 px-2 py-1 text-right text-base text-white tabular-nums focus:outline-none"
-            />
-            <span className="text-base text-white/55">%</span>
-          </div>
-        </div>
-        <div className="mt-2 flex items-center justify-between border-t border-white/5 pt-2 text-lg">
-          <span className="tracking-wider text-white/55 uppercase">
-            min received
-          </span>
-          <span className="text-white tabular-nums">
-            {minOut > 0 ? minOut.toFixed(6) : "0.000000"} {toToken.symbol}
-          </span>
-        </div>
-      </div>
+      <p className="mt-4 rounded-2xl border border-white/10 bg-white/[0.03] p-4 text-[10px] leading-relaxed tracking-[0.08em] text-white/50">
+        Testnet tokens come from the SomniaHacks faucet — ask in the faucet
+        topic for STT and {COLLATERAL_SYMBOL}. There is no in-app swap: the
+        faucet gives you both, so converting between them would serve no
+        purpose.
+      </p>
 
-      <PixelButton
-        onClick={account ? handleSwap : openLogin}
-        disabled={
-          !!account &&
-          (busy || !pool || inputNum <= 0 || inputNum > fromBalance)
-        }
-        style={account ? undefined : BLUE_BRAND_STYLE}
-        className="h-12 w-full text-base"
-      >
-        {!account
-          ? "sign in to swap"
-          : busy
-            ? "swapping…"
-            : inputNum > fromBalance
-              ? `not enough ${fromToken.symbol.toLowerCase()}`
-              : `swap ${fromToken.symbol} → ${toToken.symbol}`}
-      </PixelButton>
-
-      {status && (
-        <div
-          className={`rounded-lg px-3 py-2 text-sm ${
-            status.kind === "ok"
-              ? "bg-emerald-500/15 text-emerald-200"
-              : "bg-rose-500/15 text-rose-200"
-          }`}
+      <div className="mt-4 flex flex-col gap-2">
+        <PixelButton
+          onClick={() => window.open(FAUCET_URL, "_blank", "noopener")}
+          className="h-12 w-full"
         >
-          {status.msg}
-        </div>
-      )}
+          open faucet
+        </PixelButton>
+        <PixelButton onClick={() => refetch()} className="h-10 w-full">
+          refresh
+        </PixelButton>
+      </div>
 
-      {pool && (
-        <div className="rounded-xl bg-white/5 px-4 py-3 text-lg">
-          <div className="mb-2 tracking-[0.18em] text-white/45 uppercase">
-            pool
-          </div>
-          <PoolRow
-            label="spot"
-            value={`1 SUI = ${pool.spotPrice.toFixed(4)} dUSDC`}
-          />
-          <PoolRow label="fee" value={`${(pool.feeBps / 100).toFixed(2)}%`} />
-          <PoolRow
-            label="reserves"
-            value={`${pool.reserveSui.toFixed(2)} / ${pool.reserveDusdc.toFixed(2)}`}
-          />
-        </div>
-      )}
+      <a
+        href={addressUrl(account.address)}
+        target="_blank"
+        rel="noreferrer noopener"
+        className="mt-5 block text-center text-[10px] tracking-[0.15em] text-white/35 uppercase hover:text-white/70"
+      >
+        {shortAddress(account.address)} on explorer
+      </a>
     </div>
   )
 }
 
-function TokenInputCard({
+function Row({
   label,
-  token,
-  balance,
   value,
-  onChange,
-  onMax,
-  readOnly,
+  hint,
 }: {
   label: string
-  token: TokenMeta
-  balance: number
   value: string
-  onChange?: (v: string) => void
-  onMax?: () => void
-  readOnly?: boolean
+  hint: string
 }) {
   return (
-    <div className="rounded-2xl bg-black/35 px-4 py-3 ring-1 ring-white/5">
-      <div className="flex items-center justify-between">
-        <span className="text-[16px] tracking-[0.18em] text-white/55 uppercase">
+    <div className="flex items-baseline justify-between">
+      <div>
+        <p className="text-[11px] tracking-[0.14em] text-white/70 uppercase">
           {label}
-        </span>
-        {!readOnly && (
-          <button
-            type="button"
-            onClick={onMax}
-            disabled={!onMax}
-            className="flex items-center gap-1.5 text-white/70 hover:text-white disabled:cursor-default disabled:hover:text-white/70"
-          >
-            <span className="text-[16px] tracking-wider uppercase">bal</span>
-            <span className="text-lg text-white tabular-nums">
-              {balance.toFixed(4)}
-            </span>
-            {onMax && (
-              <span className="ml-1 rounded bg-white/10 px-1.5 py-0.5 text-xs tracking-wider text-white uppercase">
-                max
-              </span>
-            )}
-          </button>
-        )}
+        </p>
+        <p className="mt-0.5 text-[9px] tracking-[0.12em] text-white/35 uppercase">
+          {hint}
+        </p>
       </div>
-      <div className="mt-1 flex items-center gap-3">
-        <input
-          type="number"
-          value={value}
-          onChange={(e) => {
-            const v = e.target.value
-            if (v === "" || parseFloat(v) >= 0) onChange?.(v)
-          }}
-          placeholder="0.0"
-          readOnly={readOnly}
-          inputMode="decimal"
-          min={0}
-          step="any"
-          className="w-full bg-transparent text-2xl text-white tabular-nums focus:outline-none"
-        />
-        <div className="flex w-20 shrink-0 items-center justify-center gap-1 rounded-full bg-white/10 py-1 pr-2 pl-1.5">
-          <img
-            src={token.icon}
-            alt=""
-            aria-hidden
-            className="size-6 [image-rendering:pixelated]"
-          />
-          <span className="text-md tracking-wider text-white uppercase">
-            {token.symbol}
-          </span>
-        </div>
-      </div>
-    </div>
-  )
-}
-
-function DirectionToggle({
-  onClick,
-  disabled,
-}: {
-  onClick: () => void
-  disabled?: boolean
-}) {
-  return (
-    <div className="relative h-0">
-      <button
-        type="button"
-        onClick={onClick}
-        disabled={disabled}
-        aria-label="switch direction"
-        style={BLUE_BRAND_STYLE}
-        className="default-btn-green-container with-border absolute top-0 left-1/2 grid size-9 -translate-x-1/2 -translate-y-1/2 place-items-center !p-0"
-      >
-        <img
-          src="/icons/arrow_switch.png"
-          alt=""
-          aria-hidden
-          className="size-4 [image-rendering:pixelated]"
-        />
-      </button>
-    </div>
-  )
-}
-
-function PoolRow({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="flex items-center justify-between py-0.5">
-      <span className="tracking-wider text-white/55 uppercase">{label}</span>
-      <span className="text-white tabular-nums">{value}</span>
+      <span className="text-sm tracking-[0.08em]">{value}</span>
     </div>
   )
 }

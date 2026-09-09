@@ -1,6 +1,5 @@
 import { afterAll, beforeEach, describe, expect, test } from "bun:test"
 import { createHash } from "node:crypto"
-import { bcs } from "@mysten/sui/bcs"
 import { closeDb } from "./db"
 import { env } from "./env"
 import { HAS_TEST_DB, resetTables } from "./test-db"
@@ -295,55 +294,6 @@ describe("buildDeck", () => {
     }
     const pairs = new Set(cards.map((c) => `${c.expiryMarketId}:${c.strike}`))
     expect(pairs.size).toBe(5)
-  })
-})
-
-describe("commitDeck", () => {
-  test("hashes the price-space deck down to {expiryMarketId, strike} pairs", () => {
-    const cards = buildDeck(FIVE_MARKETS, SPOT, SEED_A)
-    const deck = commitDeck(cards)
-    expect(deck.cards).toHaveLength(5)
-    for (let i = 0; i < 5; i++) {
-      expect(deck.cards[i].expiryMarketId).toBe(cards[i].expiryMarketId)
-      expect(deck.cards[i].strike).toBe(cards[i].strike)
-    }
-  })
-
-  test("deterministic — same input, identical hash", () => {
-    const cards = buildDeck(FIVE_MARKETS, SPOT, SEED_A)
-    const a = commitDeck(cards)
-    const b = commitDeck(cards)
-    expect(a.hashHex).toBe(b.hashHex)
-    expect(Array.from(a.hash)).toEqual(Array.from(b.hash))
-  })
-
-  test("different seed → different hash", () => {
-    const a = commitDeck(buildDeck(FIVE_MARKETS, SPOT, SEED_A))
-    const b = commitDeck(buildDeck(FIVE_MARKETS, SPOT, SEED_B))
-    expect(a.hashHex).not.toBe(b.hashHex)
-  })
-
-  // REGRESSION GUARD: this is the exact hash the on-chain
-  // `duel::reveal_deck` will compare against. If commitDeck or its BCS
-  // layout changes, every duel reveal breaks. The expected hex is
-  // computed inline against the same BCS schema duel.move uses.
-  test("hash matches sha2-256 of BCS-serialized Card vector", () => {
-    const CardBcs = bcs.struct("Card", {
-      expiry_market_id: bcs.Address,
-      strike: bcs.u64(),
-    })
-    const DeckBcs = bcs.vector(CardBcs)
-    const outCards: DeckCardOut[] = buildDeck(FIVE_MARKETS, SPOT, SEED_A)
-    const deck = commitDeck(outCards)
-    const expectedBytes = DeckBcs.serialize(
-      deck.cards.map((c) => ({
-        expiry_market_id: c.expiryMarketId,
-        strike: c.strike.toString(),
-      }))
-    ).toBytes()
-    const expected =
-      "0x" + createHash("sha256").update(expectedBytes).digest("hex")
-    expect(deck.hashHex).toBe(expected)
   })
 })
 

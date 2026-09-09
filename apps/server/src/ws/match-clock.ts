@@ -59,6 +59,6 @@ async function tick(): Promise<void> {
         serverNowMs: now,
         status,
       })
-    }),
+    })
   )
 }

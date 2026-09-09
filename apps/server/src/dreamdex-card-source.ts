@@ -189,7 +189,7 @@ export async function buildDreamDexDeck(input: {
       // Distinct and greppable on purpose — a generic "market list failed" is
       // part of how a 12-day upstream outage went unnoticed last time.
       throw new NoCardsAvailableError(
-        "predict",
+        "dreamdex",
         `DREAMDEX_VENUE_UNAVAILABLE: ${err.message}`
       )
     }
@@ -200,7 +200,7 @@ export async function buildDreamDexDeck(input: {
 
   if (eligible.length < MIN_DECK_SIZE) {
     throw new NoCardsAvailableError(
-      "predict",
+      "dreamdex",
       `DREAMDEX_NO_LIVE_MARKETS: only ${eligible.length} eligible market(s) ` +
         `(need ${MIN_DECK_SIZE}) for theme "${theme}" — the venue may have no ` +
         `live windows in the ${MIN_HEADROOM_MS / 1000}s–${MAX_HORIZON_MS / 60000}m band right now.`

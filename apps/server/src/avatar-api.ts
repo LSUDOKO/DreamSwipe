@@ -16,7 +16,23 @@ import { getAvatarIcons, setAvatarIcon } from "./db"
 import { isValidIconId } from "./avatar-icons"
 import { json } from "./lib/http"
 import { clientIp, consume } from "./ratelimit"
-import { isSponsorOriginAllowed } from "./sponsor"
+import { env } from "./env"
+
+/**
+ * Origin allowlist for avatar writes.
+ *
+ * Previously borrowed from the Sui sponsor service, which is gone. Inlined
+ * rather than dropped: this is the only thing stopping an arbitrary site from
+ * writing avatars against a player's address.
+ *
+ * An unset ALLOWED_ORIGIN means "allow any", matching the previous behaviour
+ * and keeping local development working without configuration.
+ */
+function isSponsorOriginAllowed(origin: string | null): boolean {
+  if (!env.allowedOrigin) return true
+  if (!origin) return false
+  return env.allowedOrigin.split(",").some((o) => o.trim() === origin)
+}
 
 const MAX_ADDRESSES = 100
 

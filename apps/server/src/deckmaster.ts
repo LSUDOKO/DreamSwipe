@@ -31,8 +31,7 @@
  *     player's tab calls `reveal_deck` after `join_duel` lands; we just
  *     serve the plaintext on demand.
  */
-import { bcs } from "@mysten/sui/bcs"
-import { normalizeSuiAddress, normalizeSuiObjectId } from "@mysten/sui/utils"
+import { encodeAbiParameters, keccak256, type Hex } from "viem"
 import { createHash } from "node:crypto"
 import {
   countDecks,
@@ -42,7 +41,6 @@ import {
   upsertDeck,
 } from "./db"
 import { env } from "./env"
-import { readBtcSpotOnChain } from "./pyth"
 import { makeLogger } from "./log"
 
 const log = makeLogger("deckmaster")
@@ -61,13 +59,24 @@ export interface GeneratedDeck {
   hashHex: string
 }
 
-// ─── BCS shape that matches flicky::duel::Card on chain ─────────────────────
+// ─── Deck commitment ────────────────────────────────────────────────────────
+//
+// MUST match `DreamSwipeDuel.computeDeckCommit`:
+//
+//   keccak256(abi.encode(bytes32[] marketIds, uint256[] strikes, bytes32 salt))
+//
+// A mismatch does NOT fail at commit time — it fails at REVEAL, after both
+// players have already staked — so this encoding is kept adjacent to the
+// Solidity signature it mirrors and must be changed in lockstep with it.
+//
+// This replaced a BCS + sha256 scheme that mirrored the old Move `Card` struct.
 
-const CardBcs = bcs.struct("Card", {
-  expiry_market_id: bcs.Address,
-  strike: bcs.u64(),
-})
-const DeckBcs = bcs.vector(CardBcs)
+/** Normalize an id to a 32-byte 0x-prefixed hex string. */
+function toBytes32(id: string): Hex {
+  const raw = id.startsWith("0x") ? id.slice(2) : id
+  if (raw.length > 64) throw new Error(`market id too long: ${id}`)
+  return `0x${raw.padStart(64, "0").toLowerCase()}`
+}
 
 // ─── Market discovery (predict indexer) ──────────────────────────────────────
 
@@ -122,7 +131,7 @@ export function selectMarketRows(
   const out: MarketSnapshot[] = []
   for (const r of rows) {
     if (r.propbook_underlying_id !== 1 || r.kind !== "market_created") continue
-    const id = normalizeSuiObjectId(r.expiry_market_id)
+    const id = toBytes32(r.expiry_market_id)
     if (seen.has(id)) continue
     seen.add(id)
     const expiry = Number(r.expiry)
@@ -214,7 +223,7 @@ export function selectTieredMarkets(
 
   for (const r of rows) {
     if (r.propbook_underlying_id !== 1 || r.kind !== "market_created") continue
-    const id = normalizeSuiObjectId(r.expiry_market_id)
+    const id = toBytes32(r.expiry_market_id)
     if (seen.has(id)) continue
     seen.add(id)
     const expiry = Number(r.expiry)
@@ -314,18 +323,24 @@ export async function findTieredDeckMarkets(
 }
 
 /**
- * Current BTC spot in the same 1e9-fixed USD unit as
- * `MarketSnapshot.tickSize` (e.g. `63837582739850` == $63,837.58273985).
+ * BTC spot.
  *
- * Read from the on-chain `pyth_feed::PythFeed` object, NOT from the propbook
- * indexer it used to come from — that host stopped resolving and took deck
- * generation (and practice mode) down with it. The on-chain feed is pushed
- * by Pyth and keeps ticking independently of DeepBook Predict. See
- * `./pyth.ts`; it throws on a stale or unparseable price rather than
- * returning something a caller would build strikes from.
+ * The Pyth on-chain feed this used to read went with the Sui chain layer.
+ * DreamDEX event contracts do not need it: each market carries its own strike
+ * and settles from the venue's own oracle, so the server never has to place a
+ * strike against spot.
+ *
+ * Kept only for the practice deck, which synthesizes cards locally. It throws
+ * rather than returning a placeholder — a fabricated spot would put practice
+ * cards at strikes that never existed, which is worse than practice being
+ * unavailable.
  */
 export async function readBtcSpot(): Promise<bigint> {
-  return readBtcSpotOnChain()
+  throw new Error(
+    "SPOT_UNAVAILABLE: no price feed is configured. DreamDEX markets carry " +
+      "their own strike, so live decks do not need spot; only the synthetic " +
+      "practice deck does."
+  )
 }
 
 /**
@@ -676,7 +691,7 @@ function buildSviDeck(
   const seen = new Set<string>()
   return Array.from({ length: deckSize }, (_, i) => {
     const m = markets[i % markets.length]
-    const marketId = normalizeSuiAddress(m.expiryMarketId)
+    const marketId = toBytes32(m.expiryMarketId)
     const sign = signs[i]
     const baseRaw = sviRawStrike(
       spot,
@@ -809,7 +824,7 @@ export function buildDeck(
   const seen = new Set<string>()
   return Array.from({ length: deckSize }, (_, i) => {
     const m = markets[i % markets.length]
-    const marketId = normalizeSuiAddress(m.expiryMarketId)
+    const marketId = toBytes32(m.expiryMarketId)
     const sign = signs[i]
     const baseOffsetBps = ZONE_OFFSET_BPS[zones[i]]
     let bumpBps = 0
@@ -850,14 +865,42 @@ export function commitDeck(cards: DeckCardOut[]): GeneratedDeck {
     expiryMarketId: c.expiryMarketId,
     strike: c.strike,
   }))
-  const bytes = DeckBcs.serialize(
-    stored.map((c) => ({
-      expiry_market_id: c.expiryMarketId,
-      strike: c.strike.toString(),
-    }))
-  ).toBytes()
-  const hash = new Uint8Array(createHash("sha256").update(bytes).digest())
-  return { cards: stored, hash, hashHex: hashToHex(hash) }
+  // Salt is zero here because the server stores the plaintext deck and reveals
+  // it itself; the commitment's job is to stop the deck being SWAPPED after
+  // both players can see the matchup, not to hide it from a brute-forcer who
+  // already has the plaintext. A caller wanting a hiding commitment passes its
+  // own salt through `computeDeckCommitWithSalt`.
+  const hashHex = computeDeckCommitWithSalt(stored, ZERO_SALT)
+  const hash = Uint8Array.from(
+    (hashHex.slice(2).match(/../g) ?? []).map((b) => parseInt(b, 16))
+  )
+  return { cards: stored, hash, hashHex }
+}
+
+/** All-zero salt — see the note in `commitDeck`. */
+export const ZERO_SALT: Hex =
+  "0x0000000000000000000000000000000000000000000000000000000000000000"
+
+/**
+ * The exact commitment the contract recomputes at reveal.
+ *
+ * Kept as its own export so a test can assert it against
+ * `DreamSwipeDuel.computeDeckCommit` without going through deck generation.
+ */
+export function computeDeckCommitWithSalt(
+  cards: readonly DeckCard[],
+  salt: Hex
+): Hex {
+  return keccak256(
+    encodeAbiParameters(
+      [{ type: "bytes32[]" }, { type: "uint256[]" }, { type: "bytes32" }],
+      [
+        cards.map((c) => toBytes32(c.expiryMarketId)),
+        cards.map((c) => c.strike),
+        salt,
+      ]
+    )
+  )
 }
 
 export function hashToHex(hash: Uint8Array): string {

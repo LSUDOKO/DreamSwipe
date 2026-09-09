@@ -2,7 +2,7 @@
  * Postgres layer (Bun.sql) — every async, backed by a single connection
  * pool created from `DATABASE_URL`. We use Bun's built-in `Bun.sql`
  * rather than an ORM or a third-party driver to keep the dep surface at
- * zero (the server still ships no runtime deps beyond @mysten/*).
+ * zero — the server's only runtime deps are viem and the venue SDK.
  *
  * Tables (created on first use by `ensureSchema`):
  *   event_cursor   one row per (event-type tracker) with the last Sui

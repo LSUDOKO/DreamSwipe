@@ -15,7 +15,12 @@
  * global. They're not persisted — reactions are ephemeral.
  */
 import type { ServerWebSocket } from "bun"
-import { getDuel, insertChatMessage, recentChatMessages, pruneChatMessages } from "../db"
+import {
+  getDuel,
+  insertChatMessage,
+  recentChatMessages,
+  pruneChatMessages,
+} from "../db"
 import { env } from "../env"
 import { makeLogger, shortId } from "../log"
 import {
@@ -114,17 +119,29 @@ export function startChatPruneLoop(): void {
 export async function handleChatReact(
   ws: AnyWs,
   duelId: unknown,
-  emoji: unknown,
+  emoji: unknown
 ): Promise<void> {
   if (!ws.data.address) {
-    _sendInternal(ws, { type: "error", code: "no_address", message: "say hello first" })
+    _sendInternal(ws, {
+      type: "error",
+      code: "no_address",
+      message: "say hello first",
+    })
     return
   }
   if (typeof duelId !== "string" || !duelId.startsWith("0x")) {
-    _sendInternal(ws, { type: "error", code: "bad_duel_id", message: "duelId must be 0x…" })
+    _sendInternal(ws, {
+      type: "error",
+      code: "bad_duel_id",
+      message: "duelId must be 0x…",
+    })
     return
   }
-  if (typeof emoji !== "string" || emoji.length === 0 || emoji.length > MAX_EMOJI_LEN) {
+  if (
+    typeof emoji !== "string" ||
+    emoji.length === 0 ||
+    emoji.length > MAX_EMOJI_LEN
+  ) {
     _sendInternal(ws, {
       type: "error",
       code: "bad_emoji",

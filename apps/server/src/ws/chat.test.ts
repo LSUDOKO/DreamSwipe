@@ -9,7 +9,9 @@ import { HAS_TEST_DB, resetTables } from "../test-db"
 import * as chatModule from "./chat"
 import * as matchmakingModule from "./matchmaking"
 
-type FakeWs = ServerWebSocket<import("./matchmaking").SocketState> & { _sent: string[] }
+type FakeWs = ServerWebSocket<import("./matchmaking").SocketState> & {
+  _sent: string[]
+}
 
 function makeWs(): FakeWs {
   const sent: string[] = []
@@ -37,7 +39,10 @@ describe.skipIf(!HAS_TEST_DB)("chat", () => {
     test("rejects messages from anonymous sockets", async () => {
       const ws = makeWs()
       await chatModule.handleChatSend(ws, "hi")
-      const last = JSON.parse(ws._sent.at(-1)!) as { type: string; code: string }
+      const last = JSON.parse(ws._sent.at(-1)!) as {
+        type: string
+        code: string
+      }
       expect(last.type).toBe("error")
       expect(last.code).toBe("no_address")
     })
@@ -69,8 +74,14 @@ describe.skipIf(!HAS_TEST_DB)("chat", () => {
       expect(rows[0].fromAddress).toBe("0xa")
 
       // Broadcast to BOTH sockets (global chat)
-      const aLast = JSON.parse(a._sent.at(-1)!) as { type: string; from: string }
-      const bLast = JSON.parse(b._sent.at(-1)!) as { type: string; from: string }
+      const aLast = JSON.parse(a._sent.at(-1)!) as {
+        type: string
+        from: string
+      }
+      const bLast = JSON.parse(b._sent.at(-1)!) as {
+        type: string
+        from: string
+      }
       expect(aLast.type).toBe("chat_message")
       expect(bLast.type).toBe("chat_message")
       expect(aLast.from).toBe("0xa")

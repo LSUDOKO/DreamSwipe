@@ -157,10 +157,15 @@ export const env = {
   // on "auto" would turn one clear "no live markets" error into a confusing
   // two-stage failure ending in a staleness message that hides the real
   // cause. See docs/superpowers/plans/2026-08-30-predict-independence.md.
-  deckSource: ((): "predict" | "pyth" | "auto" => {
-    const raw = process.env.DECK_SOURCE ?? "predict"
-    if (raw === "predict" || raw === "pyth" || raw === "auto") return raw
-    throw new Error(`Bad DECK_SOURCE "${raw}" — want predict | pyth | auto.`)
+  deckSource: ((): "dreamdex" => {
+    // Only one source survives the Somnia migration: live DreamDEX event
+    // contracts. The `predict` / `pyth` values are still ACCEPTED and mapped
+    // onto it, because a deployed environment may still carry the old value
+    // and refusing to boot over a stale env var would be a needless outage.
+    const raw = process.env.DECK_SOURCE ?? "dreamdex"
+    if (raw === "dreamdex" || raw === "auto") return "dreamdex"
+    if (raw === "predict" || raw === "pyth") return "dreamdex"
+    throw new Error(`Bad DECK_SOURCE "${raw}" — want dreamdex | auto.`)
   })(),
 
   // Deckmaster: minimum headroom each card's oracle must clear at the

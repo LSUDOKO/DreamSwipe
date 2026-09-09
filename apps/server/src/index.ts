@@ -1,23 +1,23 @@
 /**
- * Flicky backend entry — single Bun.serve process that hosts:
+ * DreamSwipe backend entry — a single Bun.serve process hosting:
  *
  *   HTTP:
- *     GET  /health
+ *     GET  /health              service + venue status
+ *     GET  /bot-arena/deck      live deck + the market context a bot may see
+ *     POST /relay/swipe         submit a player's EIP-712-signed swipe
  *     POST /deckmaster/generate
  *     GET  /deckmaster/reveal?hash=0x…
- *     GET  /manager?owner=0x…   (resolve a player's AccountWrapper id)
- *     GET  /sponsor             (sponsor address + network the client builds against)
- *     POST /sponsor   (address-balance sponsored gas, allowlisted)
  *
  *   WS:
- *     /ws             matchmaking queue + duel-room broadcasts
- *                     (see src/ws/protocol.ts for the message types)
+ *     /ws                       matchmaking queue + duel-room broadcasts
+ *                               (message types in src/ws/protocol.ts)
  *
  *   Background:
- *     duel indexer    polls flicky events → broadcasts to subscribed rooms
- *     settle keeper   reveal + settle_card + redeem + finalize, gas-paid by
- *                     KEEPER_SECRET_KEY (or BOT_SECRET_KEY). Disable with
- *                     KEEPER_ENABLED=false.
+ *     somnia keeper             reads settlement from DreamDEX, writes
+ *                               settleCard/finalize on chain. No-ops without
+ *                               DREAMSWIPE_DUEL_ADDRESS + KEEPER_PRIVATE_KEY.
+ *     match clock               authoritative swipe/queue deadlines
+ *     chat prune                trims the chat backlog
  */
 import { env } from "./env"
 import { handleBotArenaRequest } from "./bot-arena-api"
@@ -25,7 +25,6 @@ import { handleRelayRequest } from "./relay-api"
 import { createSomniaKeeper, trackedDuels } from "./somnia-keeper"
 import { makeLogger } from "./log"
 import { CORS_HEADERS, corsPreflight, json } from "./lib/http"
-import { getSuiClient, decodeKeypair } from "./lib/sui"
 import { networkEnv } from "./network-env"
 import { handleDeckmasterRequest, knownHashCount } from "./deckmaster"
 import { handleDocsRequest } from "./docs"
@@ -35,83 +34,40 @@ import {
   handleLeaderboardRequest,
   handleMyRankRequest,
 } from "./leaderboard-api"
-import { handleManagerRequest } from "./manager-api"
 import { handleSeasonRequest } from "./season"
-import { handleOracleRequest } from "./oracle"
-import { handleSponsorRequest } from "./sponsor"
-import {
-  sponsorBalanceSnapshot,
-  startSponsorBalanceMonitor,
-} from "./sponsor-balance"
-import { predictWatchSnapshot, startPredictWatch } from "./predict-watch"
 import { websocketHandler } from "./ws/handlers"
 import { newSocketState } from "./ws/matchmaking"
 import { connectedAddressCount, queueStats, roomCount } from "./ws/matchmaking"
 import { startChatPruneLoop } from "./ws/chat"
 import { startMatchClock, stopMatchClock } from "./ws/match-clock"
 import {
-  oracleStreamStats,
-  startOracleStream,
-  stopOracleStream,
-} from "./ws/oracle-stream"
-import { DuelIndexer } from "./indexer"
-import { Keeper } from "./keeper"
+  marketStreamStats,
+  startMarketStream,
+  stopMarketStream,
+} from "./ws/market-stream"
 import { closeDb, listCursors, predictMarketStats, ready } from "./db"
 
 const log = makeLogger("server")
 
 /**
- * Is DeepBook Predict actually alive, and how stale is what we know?
+ * Is the prediction venue actually usable right now?
  *
- * Twelve days passed before anyone noticed 6-24 stopped creating markets, and
- * two weeks before that nobody noticed there were no players. `/health` said
- * `ok: true` throughout, because nothing it reported was about the upstream
- * the whole game depends on. This is that missing signal.
+ * Twelve days once passed before anyone noticed the previous venue had stopped
+ * creating markets, because `/health` reported `ok: true` throughout — nothing
+ * it surfaced was about the upstream the whole game depends on. This is that
+ * missing signal, now pointed at DreamDEX.
+ *
+ * Deliberately cheap: it reports what the process already knows plus the deck
+ * source, and does NOT trigger a cold market scan. `bun run check:dreamdex`
+ * is the deep probe.
  */
-async function predictHealth(): Promise<unknown> {
-  const watch = predictWatchSnapshot()
-  const now = Date.now()
-  try {
-    const stats = await predictMarketStats()
-    // Staleness comes from the WATCH, not the mirror. The indexer seeds its
-    // cursor at the newest event and skips historical replay (correctly —
-    // expired markets are useless for a deck), so on a fresh deploy the
-    // mirror is empty while upstream may have been dark for weeks. The watch
-    // queries the newest MarketCreated directly and always has an answer.
-    const newestCreated = watch.newestCreatedMs
-    const ageMs = newestCreated === null ? null : now - newestCreated
-    return {
-      deckSource: env.deckSource,
-      // The single field to alert on.
-      alive: stats.liveCount > 0,
-      lastMarketCreated:
-        newestCreated === null ? null : new Date(newestCreated).toISOString(),
-      staleForDays: ageMs === null ? null : +(ageMs / 86_400_000).toFixed(1),
-      liveMarkets: stats.liveCount,
-      indexedMarkets: stats.count,
-      newestExpiry:
-        stats.newestExpiry === null
-          ? null
-          : new Date(stats.newestExpiry).toISOString(),
-      watch,
-    }
-  } catch (e) {
-    // The mirror is unreadable, but the watch still answers the question that
-    // matters, so degrade rather than losing the signal entirely.
-    return {
-      deckSource: env.deckSource,
-      alive: false,
-      lastMarketCreated:
-        watch.newestCreatedMs === null
-          ? null
-          : new Date(watch.newestCreatedMs).toISOString(),
-      staleForDays:
-        watch.newestCreatedMs === null
-          ? null
-          : +((now - watch.newestCreatedMs) / 86_400_000).toFixed(1),
-      watch,
-      mirrorError: e instanceof Error ? e.message : String(e),
-    }
+function venueHealth(): unknown {
+  return {
+    deckSource: env.deckSource,
+    chainId: 50312,
+    rpcUrl: process.env.SOMNIA_RPC_URL ?? "https://dream-rpc.somnia.network",
+    duelContract: process.env.DREAMSWIPE_DUEL_ADDRESS ?? null,
+    note: "run `bun --filter server run check:dreamdex` for a live venue probe",
   }
 }
 
@@ -149,11 +105,6 @@ const server = Bun.serve({
   async fetch(req, server) {
     const url = new URL(req.url)
 
-    // /sponsor has its own (stricter) CORS — check BEFORE the wildcard
-    // preflight so its ALLOWED_ORIGIN rules win.
-    const sponsored = await handleSponsorRequest(req)
-    if (sponsored) return sponsored
-
     if (req.method === "OPTIONS") return corsPreflight()
 
     const botArena = await handleBotArenaRequest(req)
@@ -166,36 +117,14 @@ const server = Bun.serve({
       // Both reads hit Postgres — run them together and degrade
       // gracefully (null / error payload) so /health still answers even
       // if the DB is briefly unreachable.
-      const [decks, cursors, predict] = await Promise.all([
+      const [decks, cursors] = await Promise.all([
         knownHashCount().catch(() => null),
         safeListCursors(),
-        predictHealth(),
       ])
       return json({
         ok: true,
         port: env.port,
         network: env.network,
-        // Per-network resolution, so a deploy can be checked without
-        // guessing which ids the `_MAINNET` vars actually produced.
-        networks: Object.fromEntries(
-          env.enabledNetworks.map((net) => {
-            const ne = networkEnv(net)
-            return [
-              net,
-              {
-                flickyPackageId: ne.flickyPackageId,
-                deepbookPredictPackageId: ne.deepbookPredictPackageId,
-                predictAvailable: ne.predictAvailable,
-                sponsor: ne.sponsorSecretKey ? "configured" : "unset",
-                keeper: ne.keeperSecretKey ? "configured" : "unset",
-                // Background services run on the default network only —
-                // see the boot section below.
-                services: net === env.network ? "active" : "read-only",
-              },
-            ]
-          })
-        ),
-        flickyPackageId: env.flickyPackageId,
         decks,
         ws: {
           connectedAddresses: connectedAddressCount(),
@@ -203,21 +132,14 @@ const server = Bun.serve({
           queues: queueStats(),
         },
         services: {
-          sponsor: env.sponsorSecretKey
+          keeper: somniaKeeper ? "enabled" : "disabled (no keeper key)",
+          relayer: process.env.RELAYER_PRIVATE_KEY
             ? "enabled"
-            : "disabled (no SPONSOR_SECRET_KEY)",
-          keeper: env.keeperEnabled
-            ? env.keeperSecretKey
-              ? "enabled"
-              : "disabled (no KEEPER_SECRET_KEY)"
-            : "disabled (KEEPER_ENABLED=false)",
-          indexer:
-            env.indexerEnabled && env.flickyPackageId ? "enabled" : "disabled",
+            : "disabled (no RELAYER_PRIVATE_KEY)",
         },
         cursors,
-        predict,
-        oracleStream: oracleStreamStats(),
-        sponsorBalance: sponsorBalanceSnapshot(),
+        venue: venueHealth(),
+        marketStream: marketStreamStats(),
         somnia: {
           duelAddress: process.env.DREAMSWIPE_DUEL_ADDRESS ?? null,
           keeper: somniaKeeper ? somniaKeeper.address : "disabled",
@@ -238,9 +160,6 @@ const server = Bun.serve({
     const docs = await handleDocsRequest(req, url)
     if (docs) return docs
 
-    const oracle = await handleOracleRequest(req, url)
-    if (oracle) return oracle
-
     const duels = await handleDuelsRequest(req, url)
     if (duels) return duels
 
@@ -255,9 +174,6 @@ const server = Bun.serve({
 
     const avatar = await handleAvatarRequest(req, url)
     if (avatar) return avatar
-
-    const manager = await handleManagerRequest(req, url)
-    if (manager) return manager
 
     return new Response("Go to /docs for documentation", {
       status: 200,
@@ -278,8 +194,6 @@ log.info(`  POST /deckmaster/generate`)
 log.info(`  GET  /deckmaster/reveal?hash=0x...`)
 log.info(`  GET  /sponsor`)
 log.info(`  POST /sponsor`)
-log.info(`  GET  /oracle/list?asset=BTC`)
-log.info(`  GET  /oracle/{id}`)
 log.info(`  GET  /duels/recent`)
 log.info(`  GET  /duels/{id}`)
 log.info(`  GET  /leaderboard`)
@@ -356,28 +270,14 @@ void (async () => {
   }
 })()
 
-// The indexer, keeper, oracle stream, and matchmaking queues all run on the
-// DEFAULT network only. HTTP reads are already per-network, but running these
-// per-network needs more than a loop: separate event cursors, a funded keeper
-// key per chain, and network-partitioned queues so a testnet player can't be
-// matched with a mainnet one. Since DeepBook Predict is testnet-only there is
-// nothing on mainnet to index or settle yet, so that work lands with the
-// mainnet flip — see docs/network-switching.md.
-if (env.indexerEnabled && env.flickyPackageId) {
-  const indexer = new DuelIndexer(
-    getSuiClient(env.network),
-    env.flickyPackageId
-  )
-  void indexer.start()
-} else if (!env.flickyPackageId) {
-  log.warn("indexer disabled — no flicky packageId")
-}
+// Background services run on the DEFAULT network only. The Sui indexer,
+// DeepBook oracle stream and predict watch that used to boot here are gone with
+// the Somnia migration — settlement now comes from the venue via the keeper
+// below, so there are no chain events to index separately.
 
 startMatchClock()
-startOracleStream()
+startMarketStream()
 startChatPruneLoop()
-startSponsorBalanceMonitor()
-startPredictWatch()
 
 // Somnia settlement keeper. Reads outcomes from DreamDEX and writes
 // settleCard/finalize on chain. No-ops without DREAMSWIPE_DUEL_ADDRESS +
@@ -391,26 +291,6 @@ if (somniaKeeper) {
   )
 }
 
-if (env.keeperEnabled && env.keeperSecretKey && env.flickyPackageId) {
-  try {
-    const keypair = decodeKeypair(env.keeperSecretKey)
-    const keeper = new Keeper(
-      getSuiClient(env.network),
-      keypair,
-      env.flickyPackageId
-    )
-    void keeper.start()
-  } catch (e) {
-    log.error(
-      `keeper boot failed: ${e instanceof Error ? e.message : String(e)}`
-    )
-  }
-} else if (env.keeperEnabled) {
-  if (!env.keeperSecretKey) {
-    log.warn("keeper disabled — set KEEPER_SECRET_KEY (or BOT_SECRET_KEY)")
-  }
-}
-
 // ─── Shutdown ───────────────────────────────────────────────────────────────
 //
 // `bun --watch` sends SIGTERM on file change; pressing ^C sends SIGINT.
@@ -420,7 +300,7 @@ if (env.keeperEnabled && env.keeperSecretKey && env.flickyPackageId) {
 async function shutdown(signal: string): Promise<void> {
   log.info(`received ${signal}, shutting down`)
   stopMatchClock()
-  stopOracleStream()
+  stopMarketStream()
   try {
     server.stop()
   } catch (e) {

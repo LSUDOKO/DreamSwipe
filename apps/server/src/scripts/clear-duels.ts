@@ -21,9 +21,10 @@ const onlyId = process.argv[2]
 await ready()
 const sql = getSql()
 
-const [{ c: before }] = (await sql`SELECT COUNT(*)::int AS c FROM duel`) as Array<{
-  c: number
-}>
+const [{ c: before }] =
+  (await sql`SELECT COUNT(*)::int AS c FROM duel`) as Array<{
+    c: number
+  }>
 
 if (onlyId) {
   const [{ c: deleted }] = (await sql`
@@ -39,8 +40,9 @@ if (onlyId) {
   console.log(`deleted ${deleted} duel(s) (was ${before} total)`)
 }
 
-const [{ c: after }] = (await sql`SELECT COUNT(*)::int AS c FROM duel`) as Array<{
-  c: number
-}>
+const [{ c: after }] =
+  (await sql`SELECT COUNT(*)::int AS c FROM duel`) as Array<{
+    c: number
+  }>
 console.log(`duel rows remaining: ${after}`)
 await closeDb()

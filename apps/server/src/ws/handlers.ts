@@ -4,24 +4,17 @@
  * focused on parsing messages and dispatching.
  */
 import type { WebSocketHandler } from "bun"
-import { getSuiClient } from "../lib/sui"
 import { makeLogger, shortId } from "../log"
-import {
-  checkQueueBalanceGate,
-  MAX_DECK_SIZE,
-  requiredQueueBalance,
-  SWIPE_QUANTITY_MIST,
-} from "../predict"
+import { checkQueueBalanceGate } from "../balance-gate"
+import { STAKE_TIERS } from "./protocol"
 import { findDeckMarkets } from "../deckmaster"
 import { consume } from "../ratelimit"
 import { handleChatReact, handleChatSend, sendChatHistory } from "./chat"
 import {
-  onSocketCloseOracleStream,
-  subscribeOracles,
-  subscribeSpot,
-  unsubscribeOracles,
-  unsubscribeSpot,
-} from "./oracle-stream"
+  onSocketCloseMarketStream,
+  subscribeMarkets,
+  unsubscribeMarkets,
+} from "./market-stream"
 import { handlePracticeStart } from "./practice"
 import { isValidTier, parseClientMsg, type ServerMsg } from "./protocol"
 import {
@@ -110,29 +103,17 @@ export const websocketHandler: WebSocketHandler<SocketState> = {
           })
           return
         }
-        // PRD §Matchmaking: funding-account (6-24 AccountWrapper) balance
-        // must cover the tier stake plus the worst-case 5-card premium
-        // budget before queueing — see `requiredQueueBalance`. Check via
-        // devInspect (no signing, no gas).
-        const required = requiredQueueBalance(msg.tier)
-        const gate = await checkQueueBalanceGate(
-          getSuiClient(),
-          ws.data.address,
-          required
-        )
+        // Refuse to queue a player who cannot cover the stake, so the
+        // failure lands in the lobby instead of as a revert after an opponent
+        // is already matched and waiting. Free duels are never gated.
+        const required = STAKE_TIERS[msg.tier]
+        const gate = await checkQueueBalanceGate(ws.data.address, required)
         if (!gate.ok) {
-          if (gate.reason === "no_manager") {
-            send(ws, {
-              type: "error",
-              code: "no_wrapper",
-              message:
-                "no funding account found for this address — sign in completes the bootstrap on first run",
-            })
-          } else if (gate.reason === "insufficient_balance") {
+          if (gate.reason === "insufficient_balance") {
             send(ws, {
               type: "error",
               code: "insufficient_balance",
-              message: `account balance < ${required} (need stake + ${Number(MAX_DECK_SIZE * SWIPE_QUANTITY_MIST) / 1e6} dUSDC premium budget) — deposit before queueing`,
+              message: `wallet holds less than the ${required} stake for this tier — top up before queueing`,
               detail: {
                 need: required.toString(),
                 have: gate.balance.toString(),
@@ -261,11 +242,11 @@ export const websocketHandler: WebSocketHandler<SocketState> = {
         return
       }
       case "oracle_subscribe": {
-        subscribeOracles(ws, msg.marketIds)
+        subscribeMarkets(ws, msg.marketIds)
         return
       }
       case "oracle_unsubscribe": {
-        unsubscribeOracles(ws, msg.marketIds)
+        unsubscribeMarkets(ws, msg.marketIds)
         return
       }
       case "spot_subscribe": {
@@ -279,11 +260,11 @@ export const websocketHandler: WebSocketHandler<SocketState> = {
           })
           return
         }
-        subscribeSpot(ws)
+        /* no global spot feed on DreamDEX — prices are per-market */
         return
       }
       case "spot_unsubscribe": {
-        unsubscribeSpot(ws)
+        /* no global spot feed on DreamDEX — prices are per-market */
         return
       }
       case "ping": {
@@ -301,7 +282,7 @@ export const websocketHandler: WebSocketHandler<SocketState> = {
   },
 
   close(ws) {
-    onSocketCloseOracleStream(ws)
+    onSocketCloseMarketStream(ws)
     onSocketClose(ws)
   },
 }
