@@ -11,10 +11,10 @@
  * The copy says so plainly. Showing a Google button that silently did
  * something else would be worse than losing the option.
  */
-import { useEffect } from "react"
+import { useEffect, useState } from "react"
 import { createPortal } from "react-dom"
 import { PixelButton } from "@/components/pixel-button"
-import { useWalletConnection } from "@/hooks/use-wallet"
+import { describeWalletError, useWalletConnection } from "@/hooks/use-wallet"
 import { somniaTestnet } from "@/lib/chain"
 
 const WALLET_BRAND_STYLE = {
@@ -32,6 +32,11 @@ export function LoginModal({
 }) {
   const { connect, isPending, error, hasWallet, wrongNetwork, switchToSomnia } =
     useWalletConnection()
+  // A connect can fail BEFORE wagmi records anything (no connector, a throw in
+  // our own guard), so local failures are tracked separately and shown with
+  // the same wording.
+  const [localError, setLocalError] = useState<string | null>(null)
+  const shownError = localError ?? error
 
   useEffect(() => {
     if (!open) return
@@ -53,12 +58,15 @@ export function LoginModal({
       window.open("https://metamask.io/download/", "_blank", "noopener")
       return
     }
+    setLocalError(null)
     try {
       await connect()
       onClose()
-    } catch {
-      // wagmi surfaces the reason through `error`; a user-rejected connect is
-      // normal and must not crash the modal.
+    } catch (e) {
+      // Never swallow this silently: a wallet that is merely LOCKED reports a
+      // "user rejected" error, and showing nothing left the user staring at a
+      // button that appeared to do nothing.
+      setLocalError(describeWalletError(e))
     }
   }
 
@@ -119,16 +127,16 @@ export function LoginModal({
             </PixelButton>
           )}
 
-          {error && (
-            <p className="text-center text-[10px] tracking-[0.18em] text-red-300/80 uppercase">
-              {error.message.slice(0, 90)}
+          {shownError && (
+            <p className="text-center text-[10px] leading-relaxed tracking-[0.1em] text-red-300/85">
+              {shownError}
             </p>
           )}
 
-          <p className="mt-2 text-center text-[10px] tracking-[0.18em] text-white/35 uppercase">
+          <p className="mt-2 text-center text-[10px] leading-relaxed tracking-[0.14em] text-white/35">
             {hasWallet
-              ? `connects an evm wallet on chain ${somniaTestnet.id}. testnet only — no real funds.`
-              : "no evm wallet detected. install metamask or another injected wallet to play."}
+              ? `Unlock your wallet first, then approve the connect and the Somnia (chain ${somniaTestnet.id}) prompt. Testnet only — no real funds.`
+              : "No EVM wallet detected. Install MetaMask or another injected wallet, then reload this page."}
           </p>
         </div>
       </div>

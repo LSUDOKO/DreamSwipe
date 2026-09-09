@@ -67,21 +67,96 @@ export function useIsConnecting(): boolean {
  * pointed at another chain will make every read return nothing, and a user
  * seeing an empty app deserves to be told why.
  */
+/**
+ * Turn a wallet/provider error into something a person can act on.
+ *
+ * viem's raw messages are written for developers. "User rejected the request.
+ * Details: wallet must has at least one account" actually means the extension
+ * is installed but LOCKED or has no account yet — the user did not reject
+ * anything, and telling them they did sends them looking in the wrong place.
+ */
+export function describeWalletError(err: unknown): string {
+  const raw = err instanceof Error ? err.message : String(err ?? "")
+
+  // Order matters. "already pending" is checked FIRST because MetaMask phrases
+  // it as `Request of type 'wallet_requestPermissions' already pending`, which
+  // would otherwise be swallowed by the locked-wallet pattern below and tell
+  // the user to unlock a wallet that is already unlocked and waiting.
+  if (/already pending|already processing/i.test(raw)) {
+    return "A wallet request is already open — check your extension and finish it there."
+  }
+  // MetaMask reports a locked/account-less wallet as a REJECTION with this
+  // detail, which is why the raw message misleads.
+  if (/at least one account|no accounts|wallet_requestPermissions/i.test(raw)) {
+    return "Your wallet is locked or has no account yet. Open the extension, unlock it (or create an account), then try again."
+  }
+  // A genuine user rejection: code 4001.
+  if (/user rejected|user denied|4001/i.test(raw)) {
+    return "Connection cancelled. Approve the request in your wallet to continue."
+  }
+  if (/chain|network|unrecognized/i.test(raw)) {
+    return "Your wallet could not switch to Somnia Shannon. Approve the add-network prompt, or add chain 50312 manually."
+  }
+  if (/no wallet|not found|undefined/i.test(raw)) {
+    return "No EVM wallet detected. Install MetaMask or another injected wallet, then reload."
+  }
+  return (
+    raw.split("\n")[0]?.slice(0, 160) || "Could not connect to your wallet."
+  )
+}
+
 export function useWalletConnection() {
   const { connectors, connectAsync, isPending, error } = useConnect()
   const { disconnect } = useDisconnect()
   const { isConnected, chainId } = useAccount()
   const { switchChainAsync } = useSwitchChain()
 
-  const injectedConnector = connectors[0]
+  /**
+   * Pick the injected connector by ID, not by array position.
+   *
+   * `connectors[0]` is whatever wagmi happened to order first. With several
+   * extensions installed (MetaMask + Phantom + Rabby all inject), that is not
+   * reliably the one the user expects, and it can even be a connector with no
+   * provider at all.
+   */
+  const injectedConnector = useMemo(
+    () =>
+      connectors.find((c) => c.id === "injected") ??
+      connectors.find((c) => c.type === "injected") ??
+      connectors[0],
+    [connectors]
+  )
+
   const hasWallet =
     typeof window !== "undefined" &&
     typeof (window as { ethereum?: unknown }).ethereum !== "undefined"
 
+  /**
+   * Connect, then make sure the wallet is actually on Somnia.
+   *
+   * The chain switch is part of connecting, not a separate step the user has
+   * to discover: a wallet left on Ethereum mainnet connects fine and then every
+   * contract read returns nothing, which looks like a broken app rather than a
+   * wrong network. `switchChain` also prompts the wallet to ADD chain 50312 if
+   * it does not know it yet.
+   *
+   * A failed switch is deliberately NOT fatal — the user is connected, and the
+   * `wrongNetwork` banner gives them a second chance.
+   */
   const connect = useCallback(async () => {
-    if (!injectedConnector) throw new Error("No wallet connector available")
-    await connectAsync({ connector: injectedConnector })
-  }, [connectAsync, injectedConnector])
+    if (!injectedConnector) {
+      throw new Error("No EVM wallet detected. Install MetaMask, then reload.")
+    }
+    await connectAsync({
+      connector: injectedConnector,
+      chainId: somniaTestnet.id,
+    })
+    try {
+      await switchChainAsync({ chainId: somniaTestnet.id })
+    } catch {
+      // Left on the wrong chain; the banner handles it.
+    }
+  }, [connectAsync, injectedConnector, switchChainAsync])
 
   const switchToSomnia = useCallback(async () => {
     await switchChainAsync({ chainId: somniaTestnet.id })
@@ -93,10 +168,9 @@ export function useWalletConnection() {
     switchToSomnia,
     isConnected,
     isPending,
-    error,
-    /** No injected provider present — the user needs to install a wallet. */
+    /** Human-readable; see `describeWalletError`. */
+    error: error ? describeWalletError(error) : null,
     hasWallet,
-    /** Connected, but pointed at the wrong chain. */
     wrongNetwork: isConnected && chainId !== somniaTestnet.id,
   }
 }
