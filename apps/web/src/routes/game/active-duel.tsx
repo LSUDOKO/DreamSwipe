@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react"
+import { apiUrl } from "@/lib/config"
 import { Link } from "react-router"
 import { useCurrentAccount } from "@/hooks/use-wallet"
 import { useConfig } from "wagmi"
@@ -417,8 +418,9 @@ export function ActiveDuel({
         player: account.address as `0x${string}`,
       })
 
-      const base = import.meta.env.VITE_SERVER_HTTP_URL || ""
-      const res = await fetch(`${base}/relay/swipe`, {
+      // apiUrl, not a raw env read — see the note in bot-arena.tsx. A relative
+      // URL here would post a swipe into Vite's dev server and silently fail.
+      const res = await fetch(apiUrl("/relay/swipe"), {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({

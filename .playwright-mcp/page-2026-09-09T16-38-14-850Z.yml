@@ -1,0 +1,44 @@
+- generic [ref=f9e3]:
+  - banner [ref=f9e4]:
+    - button "sign in" [ref=f9e5] [cursor=pointer]
+  - main [ref=f9e8]:
+    - generic [ref=f9e10]:
+      - generic [ref=f9e11]:
+        - heading "bot arena" [level=1] [ref=f9e12]
+        - paragraph [ref=f9e13]: duel a strategy agent on live somnia markets
+      - generic [ref=f9e14]:
+        - heading "strategy" [level=2] [ref=f9e15]
+        - generic [ref=f9e16]:
+          - button "momentum" [ref=f9e17] [cursor=pointer]
+          - button "mean reversion" [ref=f9e18] [cursor=pointer]
+          - button "clob imbalance" [ref=f9e19] [cursor=pointer]
+          - button "contrarian" [ref=f9e20] [cursor=pointer]
+        - paragraph [ref=f9e21]: Follows the trend — backs whichever way the market is drifting.
+      - generic [ref=f9e22]:
+        - heading "difficulty" [level=2] [ref=f9e23]
+        - generic [ref=f9e24]:
+          - button "easy" [ref=f9e25] [cursor=pointer]
+          - button "medium" [ref=f9e26] [cursor=pointer]
+          - button "hard" [ref=f9e27] [cursor=pointer]
+        - paragraph [ref=f9e28]: Difficulty changes how strong a signal the bot needs before it acts — never what it can see. It reads exactly what you read.
+      - button "loading live markets…" [disabled] [ref=f9e53]
+      - paragraph [ref=f9e30]: connect a wallet to play staked duels — bot arena is free to try
+  - navigation [ref=f9e33]:
+    - link "home" [ref=f9e34] [cursor=pointer]:
+      - /url: /game/home
+      - img "home" [ref=f9e35]
+    - link "rank" [ref=f9e37] [cursor=pointer]:
+      - /url: /game/rank
+      - img "rank" [ref=f9e38]
+    - link "pvp" [ref=f9e40] [cursor=pointer]:
+      - /url: /game/pvp
+      - img "pvp" [ref=f9e42]
+    - link "bots" [ref=f9e44] [cursor=pointer]:
+      - /url: /game/bot-arena
+      - img "bots" [ref=f9e46]
+    - link "shop" [ref=f9e48] [cursor=pointer]:
+      - /url: /game/shop
+      - img "shop" [ref=f9e49]
+    - link "chat" [ref=f9e51] [cursor=pointer]:
+      - /url: /game/inventory
+      - img "chat" [ref=f9e52]

@@ -1,0 +1,93 @@
+- generic [ref=f9e3]:
+  - banner [ref=f9e4]:
+    - button "sign in" [ref=f9e5] [cursor=pointer]
+  - main [ref=f9e8]:
+    - generic [ref=f9e10]:
+      - generic [ref=f9e11]:
+        - heading "bot arena" [level=1] [ref=f9e12]
+        - paragraph [ref=f9e13]: duel a strategy agent on live somnia markets
+      - generic [ref=f9e14]:
+        - heading "strategy" [level=2] [ref=f9e15]
+        - generic [ref=f9e16]:
+          - button "momentum" [ref=f9e17] [cursor=pointer]
+          - button "mean reversion" [ref=f9e18] [cursor=pointer]
+          - button "clob imbalance" [ref=f9e19] [cursor=pointer]
+          - button "contrarian" [ref=f9e20] [cursor=pointer]
+        - paragraph [ref=f9e21]: Follows the trend — backs whichever way the market is drifting.
+      - generic [ref=f9e22]:
+        - heading "difficulty" [level=2] [ref=f9e23]
+        - generic [ref=f9e24]:
+          - button "easy" [ref=f9e25] [cursor=pointer]
+          - button "medium" [ref=f9e26] [cursor=pointer]
+          - button "hard" [ref=f9e27] [cursor=pointer]
+        - paragraph [ref=f9e28]: Difficulty changes how strong a signal the bot needs before it acts — never what it can see. It reads exactly what you read.
+      - generic [ref=f9e54]:
+        - article [ref=f9e55]:
+          - generic [ref=f9e56]:
+            - generic [ref=f9e57]: ETH · 5m
+            - generic [ref=f9e58]: settles in 2m
+          - paragraph [ref=f9e59]: ETH closes at or above its opening price
+          - paragraph [ref=f9e60]: no quotes resting — market has no price yet
+          - generic [ref=f9e61]:
+            - paragraph [ref=f9e102]: "you: UP"
+            - paragraph [ref=f9e103]: "bot: UP · 0% confidence"
+            - paragraph [ref=f9e104]: No usable signal (only 0/4 price samples so far) — picking at random
+        - article [ref=f9e64]:
+          - generic [ref=f9e65]:
+            - generic [ref=f9e66]: BTC · 15m
+            - generic [ref=f9e67]: settles in 7m
+          - paragraph [ref=f9e68]: BTC closes at or above its opening price
+          - paragraph [ref=f9e69]: no quotes resting — market has no price yet
+          - generic [ref=f9e70]:
+            - button "no / down" [ref=f9e71] [cursor=pointer]
+            - button "yes / up" [ref=f9e72] [cursor=pointer]
+        - article [ref=f9e73]:
+          - generic [ref=f9e74]:
+            - generic [ref=f9e75]: ETH · 60m
+            - generic [ref=f9e76]: settles in 22m
+          - paragraph [ref=f9e77]: ETH closes at or above its opening price
+          - paragraph [ref=f9e78]: no quotes resting — market has no price yet
+          - generic [ref=f9e79]:
+            - button "no / down" [ref=f9e80] [cursor=pointer]
+            - button "yes / up" [ref=f9e81] [cursor=pointer]
+        - article [ref=f9e82]:
+          - generic [ref=f9e83]:
+            - generic [ref=f9e84]: BTC · 60m
+            - generic [ref=f9e85]: settles in 22m
+          - paragraph [ref=f9e86]: BTC closes at or above its opening price
+          - paragraph [ref=f9e87]: no quotes resting — market has no price yet
+          - generic [ref=f9e88]:
+            - button "no / down" [ref=f9e89] [cursor=pointer]
+            - button "yes / up" [ref=f9e90] [cursor=pointer]
+        - article [ref=f9e91]:
+          - generic [ref=f9e92]:
+            - generic [ref=f9e93]: ETH · 240m
+            - generic [ref=f9e94]: settles in 202m
+          - paragraph [ref=f9e95]: ETH closes at or above its opening price
+          - paragraph [ref=f9e96]: no quotes resting — market has no price yet
+          - generic [ref=f9e97]:
+            - button "no / down" [ref=f9e98] [cursor=pointer]
+            - button "yes / up" [ref=f9e99] [cursor=pointer]
+        - paragraph [ref=f9e100]: Cards settle at their own expiry on DreamDEX. Results are scored from real settlement, not a simulation.
+        - link "back to lobby" [ref=f9e101] [cursor=pointer]:
+          - /url: /game/home
+      - paragraph [ref=f9e30]: connect a wallet to play staked duels — bot arena is free to try
+  - navigation [ref=f9e33]:
+    - link "home" [ref=f9e34] [cursor=pointer]:
+      - /url: /game/home
+      - img "home" [ref=f9e35]
+    - link "rank" [ref=f9e37] [cursor=pointer]:
+      - /url: /game/rank
+      - img "rank" [ref=f9e38]
+    - link "pvp" [ref=f9e40] [cursor=pointer]:
+      - /url: /game/pvp
+      - img "pvp" [ref=f9e42]
+    - link "bots" [ref=f9e44] [cursor=pointer]:
+      - /url: /game/bot-arena
+      - img "bots" [ref=f9e46]
+    - link "shop" [ref=f9e48] [cursor=pointer]:
+      - /url: /game/shop
+      - img "shop" [ref=f9e49]
+    - link "chat" [ref=f9e51] [cursor=pointer]:
+      - /url: /game/inventory
+      - img "chat" [ref=f9e52]

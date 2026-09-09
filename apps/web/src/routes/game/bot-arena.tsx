@@ -11,6 +11,7 @@
  * surfaces that guarantee to the player rather than asking them to trust it.
  */
 import { useCallback, useMemo, useState } from "react"
+import { apiUrl } from "@/lib/config"
 import { Link } from "react-router"
 import {
   STRATEGIES,
@@ -76,8 +77,12 @@ export default function BotArena() {
     setDecisions([])
     setCards(null)
     try {
-      const base = import.meta.env.VITE_SERVER_HTTP_URL || ""
-      const res = await fetch(`${base}/bot-arena/deck`)
+      // Use apiUrl, not a raw env read: VITE_SERVER_HTTP_URL is unset in dev,
+      // so `${""}/bot-arena/deck` resolved RELATIVE and hit Vite's index.html,
+      // failing with `Unexpected token '<'`. CONFIG.serverHttpUrl carries the
+      // localhost:3001 default and apiUrl appends ?network= like every other
+      // endpoint.
+      const res = await fetch(apiUrl("/bot-arena/deck"))
       if (!res.ok) {
         throw new Error(
           res.status === 503
