@@ -9,6 +9,7 @@
 | | |
 | --- | --- |
 | **Duel contract** | [`0x6b554BaFC2031b72AeB100cDAd111c2f70f2cC5c`](https://shannon-explorer.somnia.network/address/0x6b554BaFC2031b72AeB100cDAd111c2f70f2cC5c) |
+| **Season prize pool** | [`0xB380814066dcb5d0b4d4968742bFdC005D1FB4a7`](https://shannon-explorer.somnia.network/address/0xB380814066dcb5d0b4d4968742bFdC005D1FB4a7) |
 | **On-chain primitive** | DreamDEX Event Contracts (binary Up/Down markets) |
 | **Collateral** | tUSDC — 6 decimals (testnet); USDso/18 is mainnet-only |
 | **Gas** | STT. Players sign swipes; a relayer pays. |
@@ -45,6 +46,11 @@ winning redeems 1.00 (+0.60); the loser forfeits their 0.40 premium.
 **Neither player sent a transaction.** Both signed EIP-712 messages and the
 relayer submitted them. No wallet popup mid-duel, no gas from the player.
 
+The season prize pool is verified the same way
+(`bun --filter server run e2e:season`): create → fund → allocate → finalize →
+claim, with the claim sent **by the winner**, `claimable` correctly 0 before
+finalization, and a second claim rejected with `AlreadyClaimed`.
+
 Check the venue yourself, read-only and without a key:
 
 ```bash
@@ -58,10 +64,15 @@ bun --filter server run check:dreamdex
 ```
 apps/web            React 19 · Vite · Tailwind · wagmi + viem
 apps/server         Bun · WS relay · matchmaking · relayer · keeper · MMR
-apps/contracts-evm  Solidity (Foundry) · DreamSwipeDuel
+apps/contracts-evm  Solidity (Foundry) · DreamSwipeDuel · SeasonPrizePool
 packages/dreamdex   venue boundary: types, CLOB math, Bot Arena agents
 packages/ui         shared shadcn components
 ```
+
+**There is no Sui left.** Zero `@mysten` imports and zero `@mysten`
+dependencies: the Move package, DeepBook adapter, Pyth oracle stream, zkLogin
+auth and sponsored-gas service are all gone, replaced by the EVM equivalents
+above.
 
 One rule holds the design together: **nothing outside `packages/dreamdex` may
 import the venue SDK.** This repo already lost ~12 days of playability when a
@@ -96,6 +107,13 @@ signature here, not a convention:
 Free and Staked share **one** code path. The tier gates only whether collateral
 moves, and a Free duel carrying a stake reverts on chain.
 
+### Seasons
+
+Prizes are **escrowed**, not promised. Allocations freeze at finalization, so
+an operator cannot rewrite who gets what after seeing the leaderboard; each
+winner claims once; and the surplus sweep is bounded by `funded - allocated`,
+so an unclaimed prize can never be swept out from under a late claimer.
+
 ### Bot Arena fairness
 
 Bots see exactly what a human sees. That is structural: `PredictionContext` has
@@ -121,10 +139,10 @@ Testnet STT (gas) and tUSDC (collateral) come from the SomniaHacks faucet:
 
 ```bash
 bun typecheck   # 6/6 packages
-bun run test    # 364 tests
+bun run test    # 242 tests
 bun build
 
-cd apps/contracts-evm && forge test   # 41 tests, incl. fuzzed escrow conservation
+cd apps/contracts-evm && forge test   # 71 tests, incl. 2 fuzzed invariants
 ```
 
 ---
