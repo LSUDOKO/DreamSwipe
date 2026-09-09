@@ -1,0 +1,22 @@
+[profile.default]
+src = "src"
+test = "test"
+out = "out"
+libs = ["lib"]
+solc = "0.8.24"
+# Somnia's EVM baseline is Cancun (PUSH0, transient storage, EIP-1559).
+evm_version = "cancun"
+optimizer = true
+optimizer_runs = 200
+via_ir = false
+fs_permissions = [{ access = "read-write", path = "./deployments" }]
+
+[fmt]
+line_length = 100
+tab_width = 4
+
+[rpc_endpoints]
+somnia_testnet = "https://dream-rpc.somnia.network"
+
+[etherscan]
+somnia_testnet = { key = "${SOMNIA_EXPLORER_KEY}", url = "https://shannon-explorer.somnia.network/api" }
