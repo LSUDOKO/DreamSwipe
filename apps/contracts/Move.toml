@@ -1,0 +1,16 @@
+[package]
+name = "flicky"
+edition = "2024"
+license = "Apache-2.0"
+authors = ["Flicky Labs <lequocuyit@gmail.com>"]
+
+[dependencies]
+deepbook_predict = { local = "./deepbook_predict_min" }
+account = { local = "./account_min" }
+
+[addresses]
+flicky = "0x0"
+
+[dev-dependencies]
+
+[dev-addresses]

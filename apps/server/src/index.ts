@@ -1,0 +1,362 @@
+/**
+ * Flicky backend entry — single Bun.serve process that hosts:
+ *
+ *   HTTP:
+ *     GET  /health
+ *     POST /deckmaster/generate
+ *     GET  /deckmaster/reveal?hash=0x…
+ *     GET  /manager?owner=0x…   (resolve a player's AccountWrapper id)
+ *     GET  /sponsor             (sponsor address + network the client builds against)
+ *     POST /sponsor   (address-balance sponsored gas, allowlisted)
+ *
+ *   WS:
+ *     /ws             matchmaking queue + duel-room broadcasts
+ *                     (see src/ws/protocol.ts for the message types)
+ *
+ *   Background:
+ *     duel indexer    polls flicky events → broadcasts to subscribed rooms
+ *     settle keeper   reveal + settle_card + redeem + finalize, gas-paid by
+ *                     KEEPER_SECRET_KEY (or BOT_SECRET_KEY). Disable with
+ *                     KEEPER_ENABLED=false.
+ */
+import { env } from "./env"
+import { makeLogger } from "./log"
+import { CORS_HEADERS, corsPreflight, json } from "./lib/http"
+import { getSuiClient, decodeKeypair } from "./lib/sui"
+import { networkEnv } from "./network-env"
+import { handleDeckmasterRequest, knownHashCount } from "./deckmaster"
+import { handleDocsRequest } from "./docs"
+import { handleAvatarRequest } from "./avatar-api"
+import { handleDuelsRequest } from "./duels-api"
+import {
+  handleLeaderboardRequest,
+  handleMyRankRequest,
+} from "./leaderboard-api"
+import { handleManagerRequest } from "./manager-api"
+import { handleSeasonRequest } from "./season"
+import { handleOracleRequest } from "./oracle"
+import { handleSponsorRequest } from "./sponsor"
+import {
+  sponsorBalanceSnapshot,
+  startSponsorBalanceMonitor,
+} from "./sponsor-balance"
+import { predictWatchSnapshot, startPredictWatch } from "./predict-watch"
+import { websocketHandler } from "./ws/handlers"
+import { newSocketState } from "./ws/matchmaking"
+import { connectedAddressCount, queueStats, roomCount } from "./ws/matchmaking"
+import { startChatPruneLoop } from "./ws/chat"
+import { startMatchClock, stopMatchClock } from "./ws/match-clock"
+import {
+  oracleStreamStats,
+  startOracleStream,
+  stopOracleStream,
+} from "./ws/oracle-stream"
+import { DuelIndexer } from "./indexer"
+import { Keeper } from "./keeper"
+import { closeDb, listCursors, predictMarketStats, ready } from "./db"
+
+const log = makeLogger("server")
+
+/**
+ * Is DeepBook Predict actually alive, and how stale is what we know?
+ *
+ * Twelve days passed before anyone noticed 6-24 stopped creating markets, and
+ * two weeks before that nobody noticed there were no players. `/health` said
+ * `ok: true` throughout, because nothing it reported was about the upstream
+ * the whole game depends on. This is that missing signal.
+ */
+async function predictHealth(): Promise<unknown> {
+  const watch = predictWatchSnapshot()
+  const now = Date.now()
+  try {
+    const stats = await predictMarketStats()
+    // Staleness comes from the WATCH, not the mirror. The indexer seeds its
+    // cursor at the newest event and skips historical replay (correctly —
+    // expired markets are useless for a deck), so on a fresh deploy the
+    // mirror is empty while upstream may have been dark for weeks. The watch
+    // queries the newest MarketCreated directly and always has an answer.
+    const newestCreated = watch.newestCreatedMs
+    const ageMs = newestCreated === null ? null : now - newestCreated
+    return {
+      deckSource: env.deckSource,
+      // The single field to alert on.
+      alive: stats.liveCount > 0,
+      lastMarketCreated:
+        newestCreated === null ? null : new Date(newestCreated).toISOString(),
+      staleForDays: ageMs === null ? null : +(ageMs / 86_400_000).toFixed(1),
+      liveMarkets: stats.liveCount,
+      indexedMarkets: stats.count,
+      newestExpiry:
+        stats.newestExpiry === null
+          ? null
+          : new Date(stats.newestExpiry).toISOString(),
+      watch,
+    }
+  } catch (e) {
+    // The mirror is unreadable, but the watch still answers the question that
+    // matters, so degrade rather than losing the signal entirely.
+    return {
+      deckSource: env.deckSource,
+      alive: false,
+      lastMarketCreated:
+        watch.newestCreatedMs === null
+          ? null
+          : new Date(watch.newestCreatedMs).toISOString(),
+      staleForDays:
+        watch.newestCreatedMs === null
+          ? null
+          : +((now - watch.newestCreatedMs) / 86_400_000).toFixed(1),
+      watch,
+      mirrorError: e instanceof Error ? e.message : String(e),
+    }
+  }
+}
+
+async function safeListCursors(): Promise<unknown> {
+  try {
+    return (await listCursors()).map((c) => ({
+      tracker: c.trackerId.split("::").pop(),
+      cursor: c.cursor,
+      ageMs: Date.now() - c.updatedAt,
+    }))
+  } catch (e) {
+    // /health is read on demand and shouldn't 500 — but log so a broken
+    // DB is visible in stderr, not silently empty in the response.
+    log.warn(
+      `listCursors failed: ${e instanceof Error ? e.message : String(e)}`
+    )
+    return { error: "listCursors failed" }
+  }
+}
+
+const server = Bun.serve({
+  port: env.port,
+
+  async fetch(req, server) {
+    const url = new URL(req.url)
+
+    // /sponsor has its own (stricter) CORS — check BEFORE the wildcard
+    // preflight so its ALLOWED_ORIGIN rules win.
+    const sponsored = await handleSponsorRequest(req)
+    if (sponsored) return sponsored
+
+    if (req.method === "OPTIONS") return corsPreflight()
+
+    if (url.pathname === "/health") {
+      // Both reads hit Postgres — run them together and degrade
+      // gracefully (null / error payload) so /health still answers even
+      // if the DB is briefly unreachable.
+      const [decks, cursors, predict] = await Promise.all([
+        knownHashCount().catch(() => null),
+        safeListCursors(),
+        predictHealth(),
+      ])
+      return json({
+        ok: true,
+        port: env.port,
+        network: env.network,
+        // Per-network resolution, so a deploy can be checked without
+        // guessing which ids the `_MAINNET` vars actually produced.
+        networks: Object.fromEntries(
+          env.enabledNetworks.map((net) => {
+            const ne = networkEnv(net)
+            return [
+              net,
+              {
+                flickyPackageId: ne.flickyPackageId,
+                deepbookPredictPackageId: ne.deepbookPredictPackageId,
+                predictAvailable: ne.predictAvailable,
+                sponsor: ne.sponsorSecretKey ? "configured" : "unset",
+                keeper: ne.keeperSecretKey ? "configured" : "unset",
+                // Background services run on the default network only —
+                // see the boot section below.
+                services: net === env.network ? "active" : "read-only",
+              },
+            ]
+          })
+        ),
+        flickyPackageId: env.flickyPackageId,
+        decks,
+        ws: {
+          connectedAddresses: connectedAddressCount(),
+          rooms: roomCount(),
+          queues: queueStats(),
+        },
+        services: {
+          sponsor: env.sponsorSecretKey
+            ? "enabled"
+            : "disabled (no SPONSOR_SECRET_KEY)",
+          keeper: env.keeperEnabled
+            ? env.keeperSecretKey
+              ? "enabled"
+              : "disabled (no KEEPER_SECRET_KEY)"
+            : "disabled (KEEPER_ENABLED=false)",
+          indexer:
+            env.indexerEnabled && env.flickyPackageId ? "enabled" : "disabled",
+        },
+        cursors,
+        predict,
+        oracleStream: oracleStreamStats(),
+        sponsorBalance: sponsorBalanceSnapshot(),
+      })
+    }
+
+    if (url.pathname === "/ws") {
+      const upgraded = server.upgrade(req, { data: newSocketState() })
+      if (upgraded) return undefined as unknown as Response
+      return new Response("upgrade failed", { status: 400 })
+    }
+
+    const deck = await handleDeckmasterRequest(req, url)
+    if (deck) return deck
+
+    const docs = await handleDocsRequest(req, url)
+    if (docs) return docs
+
+    const oracle = await handleOracleRequest(req, url)
+    if (oracle) return oracle
+
+    const duels = await handleDuelsRequest(req, url)
+    if (duels) return duels
+
+    const leaderboard = await handleLeaderboardRequest(req, url)
+    if (leaderboard) return leaderboard
+
+    const myRank = await handleMyRankRequest(req, url)
+    if (myRank) return myRank
+
+    const season = handleSeasonRequest(req, url)
+    if (season) return season
+
+    const avatar = await handleAvatarRequest(req, url)
+    if (avatar) return avatar
+
+    const manager = await handleManagerRequest(req, url)
+    if (manager) return manager
+
+    return new Response("Go to /docs for documentation", {
+      status: 200,
+      headers: CORS_HEADERS,
+    })
+  },
+
+  websocket: websocketHandler,
+})
+
+log.info(`listening on http://localhost:${server.port}`)
+log.info(
+  `  networks: ${env.enabledNetworks.join(", ")} (default ${env.network}; ` +
+    `background services run on the default only)`
+)
+log.info(`  GET  /health`)
+log.info(`  POST /deckmaster/generate`)
+log.info(`  GET  /deckmaster/reveal?hash=0x...`)
+log.info(`  GET  /sponsor`)
+log.info(`  POST /sponsor`)
+log.info(`  GET  /oracle/list?asset=BTC`)
+log.info(`  GET  /oracle/{id}`)
+log.info(`  GET  /duels/recent`)
+log.info(`  GET  /duels/{id}`)
+log.info(`  GET  /leaderboard`)
+log.info(`  GET  /leaderboard/me?address=0x...`)
+log.info(`  GET  /season`)
+log.info(`  GET  /avatars?addresses=0x..,0x..`)
+log.info(`  POST /avatar`)
+log.info(`  GET  /manager?owner=0x...`)
+log.info(`  GET  /openapi.json`)
+log.info(`  GET  /docs (Scalar UI)`)
+log.info(`  WS   /ws`)
+log.info(`Go to http://localhost:${server.port}/docs for documentation`)
+if (!env.sponsorSecretKey) {
+  log.warn(`sponsor disabled — set SPONSOR_SECRET_KEY in apps/server/.env`)
+}
+if (!env.flickyPackageId) {
+  log.warn(
+    `flicky package id not found — set FLICKY_PACKAGE_ID or publish via apps/contracts`
+  )
+}
+
+// ─── Background services ────────────────────────────────────────────────────
+//
+// Boot in parallel after the fetch handler is live so a startup hiccup
+// in either subsystem doesn't take down the HTTP/WS server.
+
+// Create the Postgres schema up front so a bad DATABASE_URL surfaces in
+// the logs at boot rather than on the first duel. Non-fatal: the HTTP/WS
+// layer still answers (and /health reports the DB state) if this fails.
+void ready()
+  .then(() => log.info("postgres schema ready"))
+  .catch((e) =>
+    log.error(
+      `postgres init failed: ${e instanceof Error ? e.message : String(e)}`
+    )
+  )
+
+// The indexer, keeper, oracle stream, and matchmaking queues all run on the
+// DEFAULT network only. HTTP reads are already per-network, but running these
+// per-network needs more than a loop: separate event cursors, a funded keeper
+// key per chain, and network-partitioned queues so a testnet player can't be
+// matched with a mainnet one. Since DeepBook Predict is testnet-only there is
+// nothing on mainnet to index or settle yet, so that work lands with the
+// mainnet flip — see docs/network-switching.md.
+if (env.indexerEnabled && env.flickyPackageId) {
+  const indexer = new DuelIndexer(
+    getSuiClient(env.network),
+    env.flickyPackageId
+  )
+  void indexer.start()
+} else if (!env.flickyPackageId) {
+  log.warn("indexer disabled — no flicky packageId")
+}
+
+startMatchClock()
+startOracleStream()
+startChatPruneLoop()
+startSponsorBalanceMonitor()
+startPredictWatch()
+
+if (env.keeperEnabled && env.keeperSecretKey && env.flickyPackageId) {
+  try {
+    const keypair = decodeKeypair(env.keeperSecretKey)
+    const keeper = new Keeper(
+      getSuiClient(env.network),
+      keypair,
+      env.flickyPackageId
+    )
+    void keeper.start()
+  } catch (e) {
+    log.error(
+      `keeper boot failed: ${e instanceof Error ? e.message : String(e)}`
+    )
+  }
+} else if (env.keeperEnabled) {
+  if (!env.keeperSecretKey) {
+    log.warn("keeper disabled — set KEEPER_SECRET_KEY (or BOT_SECRET_KEY)")
+  }
+}
+
+// ─── Shutdown ───────────────────────────────────────────────────────────────
+//
+// `bun --watch` sends SIGTERM on file change; pressing ^C sends SIGINT.
+// Closing the DB explicitly flushes the WAL and releases the file lock so
+// the next boot doesn't trip the disk-I/O smoke test on a stale handle.
+
+async function shutdown(signal: string): Promise<void> {
+  log.info(`received ${signal}, shutting down`)
+  stopMatchClock()
+  stopOracleStream()
+  try {
+    server.stop()
+  } catch (e) {
+    log.warn(
+      `server.stop failed: ${e instanceof Error ? e.message : String(e)}`
+    )
+  }
+  // Close the pool so in-flight queries drain and connections are
+  // released cleanly before the process exits.
+  await closeDb()
+  process.exit(0)
+}
+
+process.on("SIGINT", () => void shutdown("SIGINT"))
+process.on("SIGTERM", () => void shutdown("SIGTERM"))

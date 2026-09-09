@@ -1,0 +1,14 @@
+[package]
+name = "deepbook_predict"
+edition = "2024"
+published-at = "0x421041754244cf0e985fb9c9f5e1f49428caf3df4cde3a7b266d8e18ea63597b"
+
+[dependencies]
+account = { local = "../account_min" }
+
+[addresses]
+deepbook_predict = "0x421041754244cf0e985fb9c9f5e1f49428caf3df4cde3a7b266d8e18ea63597b"
+
+[dev-dependencies]
+
+[dev-addresses]

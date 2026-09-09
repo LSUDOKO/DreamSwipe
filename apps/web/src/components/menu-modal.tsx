@@ -1,0 +1,157 @@
+import { useEffect } from "react"
+import { createPortal } from "react-dom"
+import { useDAppKit } from "@mysten/dapp-kit-react"
+
+import { NetworkSetting } from "@/components/network-setting"
+import { PixelButton } from "@/components/pixel-button"
+import {
+  setBgmVolume,
+  setSfxVolume,
+  useBgmVolume,
+  useModalSfx,
+  useSfxVolume,
+} from "@/lib/sound"
+
+/**
+ * Burger-menu popup. Hosts the sound settings (sfx/music volume), the
+ * network picker, and the logout action — wire additional menu items into
+ * the button column below as the game grows (inventory, referrals,
+ * how-to-play, language, etc.).
+ *
+ * Portal-mounted so it dims the mobile frame AND the outer checker
+ * background, identical pattern to <LoginModal>.
+ */
+export interface MenuModalProps {
+  open: boolean
+  onClose: () => void
+}
+
+export function MenuModal({ open, onClose }: MenuModalProps) {
+  useModalSfx(open)
+  const dAppKit = useDAppKit()
+  const sfxVolume = useSfxVolume()
+  const bgmVolume = useBgmVolume()
+
+  const handleLogout = () => {
+    void dAppKit.disconnectWallet()
+    onClose()
+  }
+
+  useEffect(() => {
+    if (!open) return
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose()
+    }
+    document.body.style.overflow = "hidden"
+    window.addEventListener("keydown", handleKey)
+    return () => {
+      document.body.style.overflow = ""
+      window.removeEventListener("keydown", handleKey)
+    }
+  }, [open, onClose])
+
+  if (!open) return null
+
+  return createPortal(
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="menu-title"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/65 p-4 backdrop-blur-[2px]"
+      onClick={onClose}
+    >
+      <div
+        className="pixel-frame relative w-full max-w-xs rounded-3xl bg-[#1b2548] font-pixel text-white"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <button
+          type="button"
+          onClick={onClose}
+          aria-label="close"
+          className="absolute top-3 right-3 grid size-7 place-items-center text-base text-white/55 hover:text-white"
+        >
+          ✕
+        </button>
+
+        <header className="px-6 pt-7 pb-3 text-center">
+          <h2 id="menu-title" className="text-2xl tracking-[0.18em] uppercase">
+            menu
+          </h2>
+        </header>
+
+        <div className="flex flex-col gap-4 px-6 pb-6">
+          <div className="flex flex-col gap-3 rounded-2xl bg-black/25 p-3">
+            <VolumeSlider
+              label="sfx"
+              icon="/icons/sound.png"
+              value={sfxVolume}
+              onChange={setSfxVolume}
+            />
+            <VolumeSlider
+              label="music"
+              icon="/icons/music.png"
+              value={bgmVolume}
+              onChange={setBgmVolume}
+            />
+          </div>
+
+          <NetworkSetting />
+
+          <PixelButton onClick={handleLogout} className="h-12">
+            <span className="flex w-full items-center justify-center gap-2 text-2xl">
+              <img
+                src="/icons/exit.png"
+                alt=""
+                aria-hidden
+                className="size-5 [image-rendering:pixelated]"
+              />
+              logout
+            </span>
+          </PixelButton>
+        </div>
+      </div>
+    </div>,
+    document.body
+  )
+}
+
+/** 0-1 volume, rendered as a chunky pixel-styled range input. */
+function VolumeSlider({
+  label,
+  icon,
+  value,
+  onChange,
+}: {
+  label: string
+  icon: string
+  value: number
+  onChange: (v: number) => void
+}) {
+  const percent = Math.round(value * 100)
+  return (
+    <div className="flex flex-col gap-1.5">
+      <div className="flex items-center justify-between">
+        <span className="flex items-center gap-2 text-sm tracking-[0.18em] text-white/70 uppercase">
+          <img
+            src={icon}
+            alt=""
+            aria-hidden
+            className="size-4 [image-rendering:pixelated]"
+          />
+          {label}
+        </span>
+        <span className="text-xs text-white/45 tabular-nums">{percent}%</span>
+      </div>
+      <input
+        type="range"
+        min={0}
+        max={100}
+        step={5}
+        value={percent}
+        onChange={(e) => onChange(Number(e.target.value) / 100)}
+        aria-label={`${label} volume`}
+        className="h-2 w-full cursor-pointer appearance-none rounded-none bg-white/15 [&::-moz-range-thumb]:h-4 [&::-moz-range-thumb]:w-4 [&::-moz-range-thumb]:rounded-none [&::-moz-range-thumb]:border-0 [&::-moz-range-thumb]:bg-[#4094fb] [&::-moz-range-thumb]:shadow-[0_0_0_2px_#0b1228] [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:rounded-none [&::-webkit-slider-thumb]:bg-[#4094fb] [&::-webkit-slider-thumb]:shadow-[0_0_0_2px_#0b1228]"
+      />
+    </div>
+  )
+}

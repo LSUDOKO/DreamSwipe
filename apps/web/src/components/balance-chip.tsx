@@ -1,0 +1,52 @@
+import type { CSSProperties } from "react"
+
+import { PixelButton } from "@/components/pixel-button"
+
+const PLUS_BUTTON_STYLE = {
+  "--btn-bg": "#4094fb",
+  "--btn-highlight": "#7eb6ff",
+} as CSSProperties
+
+/**
+ * Game-currency chip — dark capsule with the token icon poking out the
+ * left side, the amount centered in the dark fill, and a chunky blue
+ * pixel-art "+" button on the right that fires `onClick` (typically
+ * opens the manager-USDC deposit modal).
+ */
+export function BalanceChip({
+  icon,
+  amount,
+  onClick,
+  label,
+  id,
+}: {
+  icon: string
+  amount: string
+  onClick: () => void
+  label?: string
+  id?: string
+}) {
+  return (
+    <div id={id} className="flex items-center">
+      <div className="relative flex h-8 items-center rounded-lg bg-[#1f1812] pr-5 pl-8 shadow-[inset_0_1px_0_rgba(255,255,255,0.05),inset_0_-1px_0_rgba(0,0,0,0.4)]">
+        <img
+          src={icon}
+          alt=""
+          aria-hidden
+          className="absolute top-1/2 -left-2 size-8 -translate-y-1/2 [image-rendering:pixelated]"
+        />
+        <span className="text-base text-xl tracking-wider text-white tabular-nums">
+          {amount}
+        </span>
+      </div>
+      <PixelButton
+        onClick={onClick}
+        style={PLUS_BUTTON_STYLE}
+        aria-label={label ? `add ${label}` : "add"}
+        className="-ml-2 size-7 !p-0 text-base"
+      >
+        +
+      </PixelButton>
+    </div>
+  )
+}

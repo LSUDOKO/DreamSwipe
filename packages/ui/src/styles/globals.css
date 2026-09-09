@@ -1,0 +1,771 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+@import "@fontsource-variable/inter";
+
+/*
+ * Custom typefaces.
+ *
+ * TTF files live in `apps/web/public/fonts/` and are served by Vite at
+ * the absolute URLs below. Drop your files there and either match the
+ * filenames or update the `src:` lines.
+ *
+ *   landing.ttf  → display font for the landing page (--font-display, font-display utility)
+ *   pixel.ttf    → in-game font for the mobile-frame game UI (--font-pixel, font-pixel utility)
+ */
+@font-face {
+  font-family: "Flicky Display";
+  src: url("/fonts/landing.ttf") format("truetype");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Flicky Pixel";
+  src: url("/fonts/pixel.ttf") format("truetype");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+@custom-variant dark (&:is(.dark *));
+@source "../../../apps/**/*.{ts,tsx}";
+@source "../../../components/**/*.{ts,tsx}";
+@source "../**/*.{ts,tsx}";
+
+/*
+ * Animated checker background for the game-page outer canvas.
+ *
+ * Uses the SidOfc 4-gradient trick (26%/75% breakpoints + half-tile-offset
+ * positions) to avoid the faint diagonal line artifact that pure
+ * repeating-conic-gradient shows on some browsers. Tile = 64px square.
+ *
+ * One animation cycle drifts by exactly one tile in each axis, so the
+ * loop is seamless. Tile size and offsets are coupled — if you change
+ * the size, the four positions in both the static rule and the keyframe
+ * must update too (size/2 for offset, full size for the end position).
+ */
+@keyframes checker-drift {
+  from {
+    background-position: 0 0, 64px 0, 64px -64px, 0 64px;
+  }
+  to {
+    background-position: 128px 128px, 192px 128px, 192px 64px, 128px 192px;
+  }
+}
+
+.bg-checker {
+  background-color: #fbfbfb;
+  background-image:
+    linear-gradient(45deg, #d4f6ff 26%, transparent 26%),
+    linear-gradient(135deg, #d4f6ff 26%, transparent 26%),
+    linear-gradient(45deg, transparent 75%, #d4f6ff 75%),
+    linear-gradient(135deg, transparent 75%, #d4f6ff 75%);
+  background-size: 128px 128px;
+  background-position: 0 0, 64px 0, 64px -64px, 0 64px;
+  animation: checker-drift 12s linear infinite;
+}
+
+.bg-checker-dark {
+  background-color: #131a36;
+  background-image:
+    linear-gradient(45deg, #243364 26%, transparent 26%),
+    linear-gradient(135deg, #243364 26%, transparent 26%),
+    linear-gradient(45deg, transparent 75%, #243364 75%),
+    linear-gradient(135deg, transparent 75%, #243364 75%);
+  background-size: 128px 128px;
+  background-position: 0 0, 64px 0, 64px -64px, 0 64px;
+  animation: checker-drift 12s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bg-checker,
+  .bg-checker-dark {
+    animation: none;
+  }
+}
+
+/*
+ * Pixel-cabinet frame treatment.
+ *
+ * Stacked box-shadows with zero blur radius give hard, stepped edges —
+ * the chunky retro look without needing a bitmap border-image. Layers:
+ *   1. 4px solid black ring around all four sides
+ *   2. Same shadow shifted down so the bottom edge reads thicker —
+ *      classic pixel-art "weight underneath" effect, no perspective trick
+ *      needed. Top/left/right stay at 4px; bottom becomes 4 + 8 = 12px.
+ */
+.pixel-frame {
+  box-shadow:
+    0 0 0 4px #000000,
+    0 8px 0 4px #000000;
+}
+
+/*
+ * Green JRPG-menu button.
+ *
+ * Pixel-art look = notched/stepped corners (4-px square cut at each
+ * corner via clip-path) + vertical gradient with darker bottom for
+ * visual weight + inset bevel (highlight on top, shadow on bottom).
+ * No outer border — the gradient + bevel carry the pixel-art read.
+ *
+ * Apply to any <button>. <MatchButton> handles the inner layout.
+ */
+.default-btn-green-container {
+  background: var(--btn-bg, #00ad45);
+  border-radius: 0;
+  /*
+   * 2-step staircase corners — 6×6 cut at each corner, made of two
+   * 3-px stair steps. More visible "jag" than a single-step notch.
+   */
+  clip-path: polygon(
+    6px 0,
+    calc(100% - 6px) 0,
+    calc(100% - 6px) 3px,
+    calc(100% - 3px) 3px,
+    calc(100% - 3px) 6px,
+    100% 6px,
+    100% calc(100% - 6px),
+    calc(100% - 3px) calc(100% - 6px),
+    calc(100% - 3px) calc(100% - 3px),
+    calc(100% - 6px) calc(100% - 3px),
+    calc(100% - 6px) 100%,
+    6px 100%,
+    6px calc(100% - 3px),
+    3px calc(100% - 3px),
+    3px calc(100% - 6px),
+    0 calc(100% - 6px),
+    0 6px,
+    3px 6px,
+    3px 3px,
+    6px 3px
+  );
+  box-shadow:
+    /* Top highlight: lighter color, opaque, 4px tall — sits as a hard
+       pixel-art "shine" stripe on the top edge without dividing the
+       main color into halves. Override via --btn-highlight per instance. */
+    inset 0 4px 0 var(--btn-highlight, #5de890),
+    inset 0 -5px 0 rgba(0, 0, 0, 0.35);
+  text-shadow: var(--btn-text-shadow, 0 1px 0 rgba(0, 0, 0, 0.4));
+  transition: filter 80ms linear;
+}
+
+.default-btn-green-container:hover {
+  filter: brightness(0.94) saturate(0.95);
+}
+
+.default-btn-green-container:disabled {
+  filter: grayscale(0.9);
+  cursor: not-allowed;
+}
+
+/*
+ * Bordered variant — adds a 2px hard black outline that follows the
+ * staircase clip-path. `box-shadow` is no good here because clip-path
+ * clips it; `filter: drop-shadow()` instead is applied to the rendered
+ * silhouette, so it traces the corner steps faithfully.
+ *
+ * Four chained drop-shadows (one per axis direction) approximate a
+ * uniform solid outline. Hover state must include the four drop-shadows
+ * too, otherwise CSS's filter rule replaces (doesn't merge) on hover.
+ */
+.default-btn-green-container.with-border {
+  filter:
+    drop-shadow(-2px 0 0 #000)
+    drop-shadow(2px 0 0 #000)
+    drop-shadow(0 -2px 0 #000)
+    drop-shadow(0 2px 0 #000);
+}
+
+.default-btn-green-container.with-border:hover {
+  filter:
+    drop-shadow(-2px 0 0 #000)
+    drop-shadow(2px 0 0 #000)
+    drop-shadow(0 -2px 0 #000)
+    drop-shadow(0 2px 0 #000)
+    brightness(0.94)
+    saturate(0.95);
+}
+
+.default-btn-green-container.with-border:disabled {
+  filter:
+    drop-shadow(-2px 0 0 #000)
+    drop-shadow(2px 0 0 #000)
+    drop-shadow(0 -2px 0 #000)
+    drop-shadow(0 2px 0 #000)
+    grayscale(0.9);
+}
+
+/*
+ * Featured nav tile (e.g. the central PvP button). Same pixel-art
+ * recipe as .default-btn-green-container — staircase-notched corners
+ * via clip-path, top highlight + bottom shadow via inset box-shadow —
+ * recolored as a blue interior with a 3-px gold outline traced around
+ * the silhouette via filter: drop-shadow.
+ */
+.featured-nav-tile {
+  background: #ffc629;
+  border-radius: 0;
+  clip-path: polygon(
+    6px 0,
+    calc(100% - 6px) 0,
+    calc(100% - 6px) 3px,
+    calc(100% - 3px) 3px,
+    calc(100% - 3px) 6px,
+    100% 6px,
+    100% calc(100% - 6px),
+    calc(100% - 3px) calc(100% - 6px),
+    calc(100% - 3px) calc(100% - 3px),
+    calc(100% - 6px) calc(100% - 3px),
+    calc(100% - 6px) 100%,
+    6px 100%,
+    6px calc(100% - 3px),
+    3px calc(100% - 3px),
+    3px calc(100% - 6px),
+    0 calc(100% - 6px),
+    0 6px,
+    3px 6px,
+    3px 3px,
+    6px 3px
+  );
+  box-shadow:
+    inset 0 4px 0 #ffe476,
+    inset 0 -5px 0 rgba(0, 0, 0, 0.35);
+  /*
+   * Dark-amber outline traced around the staircase silhouette + the
+   * "selected" brightness boost baked into the same filter chain so
+   * Tailwind brightness utilities don't replace and erase the outline.
+   */
+  filter:
+    drop-shadow(-3px 0 0 #7c4f08)
+    drop-shadow(3px 0 0 #7c4f08)
+    drop-shadow(0 -3px 0 #7c4f08)
+    drop-shadow(0 3px 0 #7c4f08)
+    brightness(1.05) saturate(1.05);
+}
+
+.featured-nav-tile.is-inactive {
+  filter:
+    drop-shadow(-3px 0 0 #4d3308)
+    drop-shadow(3px 0 0 #4d3308)
+    drop-shadow(0 -3px 0 #4d3308)
+    drop-shadow(0 3px 0 #4d3308)
+    brightness(0.78) saturate(0.85);
+}
+
+.featured-nav-tile.is-inactive:hover {
+  filter:
+    drop-shadow(-3px 0 0 #6b4408)
+    drop-shadow(3px 0 0 #6b4408)
+    drop-shadow(0 -3px 0 #6b4408)
+    drop-shadow(0 3px 0 #6b4408)
+    brightness(0.92) saturate(0.95);
+}
+
+/*
+ * Player avatar — staircase-notched square so the silhouette reads as
+ * pixel art (corners stepped, not rounded), with a 2px black outline
+ * traced around the silhouette via filter: drop-shadow. The gradient
+ * fill is supplied per-instance via inline style by <PlayerAvatar>.
+ *
+ * Notch dimensions (3px steps, 6px corner cut) match the green button
+ * and featured-nav-tile so all pixel-art surfaces share one corner
+ * vocabulary across the UI.
+ */
+.pixel-avatar,
+.pixel-tile {
+  clip-path: polygon(
+    6px 0,
+    calc(100% - 6px) 0,
+    calc(100% - 6px) 3px,
+    calc(100% - 3px) 3px,
+    calc(100% - 3px) 6px,
+    100% 6px,
+    100% calc(100% - 6px),
+    calc(100% - 3px) calc(100% - 6px),
+    calc(100% - 3px) calc(100% - 3px),
+    calc(100% - 6px) calc(100% - 3px),
+    calc(100% - 6px) 100%,
+    6px 100%,
+    6px calc(100% - 3px),
+    3px calc(100% - 3px),
+    3px calc(100% - 6px),
+    0 calc(100% - 6px),
+    0 6px,
+    3px 6px,
+    3px 3px,
+    6px 3px
+  );
+  filter:
+    drop-shadow(-2px 0 0 #000)
+    drop-shadow(2px 0 0 #000)
+    drop-shadow(0 -2px 0 #000)
+    drop-shadow(0 2px 0 #000);
+}
+
+.pixel-tile:hover {
+  filter:
+    drop-shadow(-2px 0 0 #fff)
+    drop-shadow(2px 0 0 #fff)
+    drop-shadow(0 -2px 0 #fff)
+    drop-shadow(0 2px 0 #fff)
+    brightness(1.1);
+}
+
+.pixel-tile:active {
+  filter:
+    drop-shadow(-2px 0 0 #fff)
+    drop-shadow(2px 0 0 #fff)
+    drop-shadow(0 -2px 0 #fff)
+    drop-shadow(0 2px 0 #fff)
+    brightness(0.95);
+}
+
+/* Opt out of the hover/active white-border highlight — for decorative,
+ * non-interactive tiles (e.g. the peeking next-card backdrop). Higher
+ * specificity than `.pixel-tile:hover`, so it wins regardless of order. */
+.pixel-tile.no-hover:hover,
+.pixel-tile.no-hover:active {
+  filter:
+    drop-shadow(-2px 0 0 #000)
+    drop-shadow(2px 0 0 #000)
+    drop-shadow(0 -2px 0 #000)
+    drop-shadow(0 2px 0 #000);
+}
+
+.pixel-avatar {
+  filter:
+    drop-shadow(-2px 0 0 #000)
+    drop-shadow(2px 0 0 #000)
+    drop-shadow(0 -2px 0 #000)
+    drop-shadow(0 2px 0 #000);
+}
+
+/*
+ * CRT screen overlay — adapted from Alec Lownes' "Simulating a CRT
+ * Monitor in CSS" (https://blog.webguy.pw/blog/simulating-a-crt-monitor-in-css/).
+ *
+ * - `::before` paints a static scanline + RGB-mask layer over the content.
+ * - `::after` runs a subtle low-amplitude flicker (capped at ~12 % opacity,
+ *   not the wild 8 %-96 % of the original — that's too distracting on a
+ *   small in-game tile).
+ * - SVG strokes get a tiny phosphor glow via `drop-shadow`, so the lines
+ *   read like emitted light rather than ink.
+ *
+ * Apply with `className="crt-screen"`. The wrapper MUST have
+ * `position: relative` and `overflow: hidden` (the latter so the
+ * scanlines clip to rounded corners).
+ */
+.crt-screen {
+  position: relative;
+  overflow: hidden;
+  /* Elliptical pillow corners — the classic CRT face shape (wider
+     than tall, so the curvature reads as bowed glass, not a rounded
+     rectangle). */
+  border-radius: 22px / 14px;
+  /* Upper-left glass gleam, hinting at a light source on the face. */
+  background-image:
+    radial-gradient(ellipse 65% 45% at 28% 22%, rgba(255, 255, 255, 0.06), transparent 70%);
+  /* Edge vignette: a short-range corner shadow + a softer outer bowl —
+     together they suggest the screen surface curving away from the
+     viewer at the edges. */
+  box-shadow:
+    inset 0 0 18px rgba(0, 0, 0, 0.55),
+    inset 0 0 60px rgba(0, 0, 0, 0.35);
+}
+
+.crt-screen::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.28) 50%),
+    linear-gradient(90deg, rgba(255, 0, 0, 0.06), rgba(0, 255, 0, 0.02), rgba(0, 0, 255, 0.06));
+  background-size: 100% 2px, 3px 100%;
+  z-index: 2;
+  pointer-events: none;
+  mix-blend-mode: overlay;
+}
+
+.crt-screen::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: rgba(18, 16, 16, 0.12);
+  opacity: 0;
+  z-index: 3;
+  pointer-events: none;
+  animation: crt-flicker 0.18s infinite;
+}
+
+.crt-screen svg {
+  filter: drop-shadow(0 0 1.5px currentColor);
+}
+
+@keyframes crt-flicker {
+  0%   { opacity: 0.03; }
+  10%  { opacity: 0.08; }
+  20%  { opacity: 0.02; }
+  30%  { opacity: 0.10; }
+  40%  { opacity: 0.04; }
+  50%  { opacity: 0.07; }
+  60%  { opacity: 0.03; }
+  70%  { opacity: 0.09; }
+  80%  { opacity: 0.04; }
+  90%  { opacity: 0.06; }
+  100% { opacity: 0.03; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .crt-screen::after {
+    animation: none;
+  }
+}
+
+/*
+ * Linear-app-derived palette.
+ *
+ *   canvas #010102        deepest dark
+ *   surface 0f1011..18191a  staged charcoal tiers
+ *   hairline 23252a       1 px borders
+ *   ink #f7f8f8           body
+ *   ink-subtle #8a8f98    muted text
+ *   primary #5e6ad2       lavender accent (used sparingly per Linear)
+ *
+ * Source: DESIGN.md generated via `npx getdesign add linear.app`.
+ * The shadcn variable contract (background/foreground/primary/…) is
+ * preserved so existing components inherit. Extras (--surface-1..4,
+ * --hairline-strong, --ink-subtle, --ink-tertiary) are exposed for
+ * views that want explicit tiers.
+ */
+@theme inline {
+  --font-heading: var(--font-sans);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-chart-5: var(--chart-5);
+  --color-chart-4: var(--chart-4);
+  --color-chart-3: var(--chart-3);
+  --color-chart-2: var(--chart-2);
+  --color-chart-1: var(--chart-1);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --color-foreground: var(--foreground);
+  --color-background: var(--background);
+  /* Linear-specific surface tiers + hairlines, accessible via `bg-surface-1` etc. */
+  --color-surface-1: var(--surface-1);
+  --color-surface-2: var(--surface-2);
+  --color-surface-3: var(--surface-3);
+  --color-surface-4: var(--surface-4);
+  --color-hairline: var(--hairline);
+  --color-hairline-strong: var(--hairline-strong);
+  --color-ink-subtle: var(--ink-subtle);
+  --color-ink-tertiary: var(--ink-tertiary);
+  /* Linear's radius scale (denser than shadcn default). */
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-xl: 12px;
+  --radius-2xl: 16px;
+  --radius-3xl: 24px;
+  --radius-4xl: 32px;
+  --font-sans: "Inter Variable", -apple-system, BlinkMacSystemFont, "SF Pro Display", sans-serif;
+  --font-mono: ui-monospace, "SFMono-Regular", "Menlo", monospace;
+  --font-display: "Flicky Display", "Inter Variable", -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-pixel: "Flicky Pixel", ui-monospace, "SFMono-Regular", "Menlo", monospace;
+}
+
+/* Light mode — Linear inverse surfaces (less polished, dark is canonical). */
+:root {
+  --background: #fafafa;
+  --foreground: #18191a;
+  --card: #ffffff;
+  --card-foreground: #18191a;
+  --popover: #ffffff;
+  --popover-foreground: #18191a;
+  --primary: #5e6ad2;
+  --primary-foreground: #ffffff;
+  --secondary: #f5f6f6;
+  --secondary-foreground: #18191a;
+  --muted: #f5f6f6;
+  --muted-foreground: #62666d;
+  --accent: #f5f6f6;
+  --accent-foreground: #18191a;
+  --destructive: #e5484d;
+  --border: #e6e7e9;
+  --input: #e6e7e9;
+  --ring: #5e69d1;
+  --chart-1: #5e6ad2;
+  --chart-2: #828fff;
+  --chart-3: #7a7fad;
+  --chart-4: #62666d;
+  --chart-5: #18191a;
+  --radius: 0.5rem;
+  --surface-1: #ffffff;
+  --surface-2: #fafafa;
+  --surface-3: #f5f6f6;
+  --surface-4: #ebecec;
+  --hairline: #e6e7e9;
+  --hairline-strong: #d0d6e0;
+  --ink-subtle: #62666d;
+  --ink-tertiary: #8a8f98;
+  --sidebar: #ffffff;
+  --sidebar-foreground: #18191a;
+  --sidebar-primary: #5e6ad2;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #f5f6f6;
+  --sidebar-accent-foreground: #18191a;
+  --sidebar-border: #e6e7e9;
+  --sidebar-ring: #5e69d1;
+}
+
+/* Dark mode — Linear canvas. Default for flicky. */
+.dark {
+  --background: #010102;
+  --foreground: #f7f8f8;
+  --card: #0f1011;
+  --card-foreground: #f7f8f8;
+  --popover: #141516;
+  --popover-foreground: #f7f8f8;
+  --primary: #5e6ad2;
+  --primary-foreground: #ffffff;
+  --secondary: #141516;
+  --secondary-foreground: #d0d6e0;
+  --muted: #0f1011;
+  --muted-foreground: #8a8f98;
+  --accent: #18191a;
+  --accent-foreground: #f7f8f8;
+  --destructive: #ef5e5e;
+  --border: #23252a;
+  --input: #23252a;
+  --ring: #5e69d1;
+  --chart-1: #5e6ad2;
+  --chart-2: #828fff;
+  --chart-3: #7a7fad;
+  --chart-4: #d0d6e0;
+  --chart-5: #f7f8f8;
+  --surface-1: #0f1011;
+  --surface-2: #141516;
+  --surface-3: #18191a;
+  --surface-4: #191a1b;
+  --hairline: #23252a;
+  --hairline-strong: #34343a;
+  --ink-subtle: #8a8f98;
+  --ink-tertiary: #62666d;
+  --sidebar: #0f1011;
+  --sidebar-foreground: #f7f8f8;
+  --sidebar-primary: #5e6ad2;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #18191a;
+  --sidebar-accent-foreground: #f7f8f8;
+  --sidebar-border: #23252a;
+  --sidebar-ring: #5e69d1;
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+    font-feature-settings:
+      "ss01" on,
+      "cv11" on;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+  /* Display-weight tightening for headings per Linear's negative-tracking ethos. */
+  h1,
+  h2,
+  h3 {
+    font-weight: 600;
+    letter-spacing: -0.02em;
+  }
+  button:not(:disabled),
+  [role="button"]:not(:disabled) {
+    cursor: pointer;
+  }
+}
+
+/* ─── Route transitions ───────────────────────────────────────────── */
+@keyframes route-swipe-from-right {
+  from {
+    transform: translate3d(100%, 0, 0);
+    opacity: 0.35;
+  }
+  to {
+    transform: translate3d(0, 0, 0);
+    opacity: 1;
+  }
+}
+@keyframes route-swipe-from-left {
+  from {
+    transform: translate3d(-100%, 0, 0);
+    opacity: 0.35;
+  }
+  to {
+    transform: translate3d(0, 0, 0);
+    opacity: 1;
+  }
+}
+.route-swipe-from-right {
+  animation: route-swipe-from-right 260ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.route-swipe-from-left {
+  animation: route-swipe-from-left 260ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+/* ─── Landing → game "CRT power-on" transition ──────────────────────
+   Opt-in via `html[data-crt]`, set imperatively by the landing "enter
+   the game" CTA right before it navigates (and self-cleared after the
+   animation). The screen cuts to a black void, the old page blinks out,
+   then the new page snaps open from a bright center scanline and expands
+   vertically — an old-TV switch-on.
+
+   Why the attribute gate rather than relying on `viewTransition: true`
+   alone: React Router re-applies the View Transitions API on browser
+   back/forward for any history entry originally created with
+   `viewTransition: true`. A global `::view-transition(root)` rule would
+   therefore replay the CRT whenever the user pops across the landing↔game
+   boundary. Gating on `[data-crt]` — which only the CTA sets — keeps the
+   CRT to the intentional forward navigation; every other view transition
+   (incl. back/forward) falls through to the instant-cut default below.
+
+   The in-frame route-swipe above is class-based (no View Transitions
+   API), so it never triggers these and there's no conflict. */
+
+/* Default for any non-CRT view transition (e.g. browser back/forward):
+   instant cut, no UA cross-fade. */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation: none;
+}
+
+html[data-crt]::view-transition {
+  background-color: #000; /* the black void the screen powers on from */
+}
+html[data-crt]::view-transition-old(root) {
+  animation: crt-power-off 160ms ease-in both;
+}
+html[data-crt]::view-transition-new(root) {
+  animation: crt-power-on 620ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  transform-origin: center;
+}
+@keyframes crt-power-off {
+  to {
+    opacity: 0;
+    filter: brightness(0);
+  }
+}
+@keyframes crt-power-on {
+  0% {
+    clip-path: inset(50% 0 50% 0); /* collapsed to a center horizontal line */
+    filter: brightness(7) saturate(0.3);
+  }
+  12% {
+    clip-path: inset(49.6% 0 49.6% 0); /* ultra-bright thin scanline holds */
+    filter: brightness(9) saturate(0.3);
+  }
+  45% {
+    clip-path: inset(0 0 0 0); /* snaps open vertically to full height */
+    filter: brightness(2.2) saturate(0.7);
+  }
+  100% {
+    clip-path: inset(0 0 0 0);
+    filter: brightness(1) saturate(1); /* smooth settle — no flicker */
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  html[data-crt]::view-transition-old(root),
+  html[data-crt]::view-transition-new(root) {
+    animation: none;
+  }
+}
+
+/* ─── Queue takeover — fade + subtle scale-in for the PvP matchmaking
+   screen. Fires once on mount of the queue screen so going from the
+   queue button to the searching screen has a sense of arrival. */
+@keyframes queue-enter {
+  from {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+.queue-enter {
+  animation: queue-enter 280ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  transform-origin: center;
+}
+
+/* ─── Border glow — soft breathing outline that fades in/out around
+   the queue-screen banner, no scale change. Lives on a stationary
+   rounded-rect overlay so the border itself stays put and only the
+   glow intensity breathes. */
+@keyframes border-glow {
+  0%,
+  100% {
+    opacity: 0.35;
+    box-shadow:
+      0 0 0 1px rgba(255, 255, 255, 0.25),
+      0 0 12px 0 rgba(125, 179, 255, 0.25);
+  }
+  50% {
+    opacity: 1;
+    box-shadow:
+      0 0 0 1px rgba(255, 255, 255, 0.55),
+      0 0 24px 4px rgba(125, 179, 255, 0.55);
+  }
+}
+.border-glow {
+  animation: border-glow 2.4s ease-in-out infinite;
+}
+
+/* Swipe-window HUD urgency pulse (final 60s). box-shadow + filter only — no
+   transform, so it never clobbers the chip's Tailwind -translate-x-1/2. */
+@keyframes countdown-urgent {
+  0%,
+  100% {
+    box-shadow:
+      inset 0 2px 0 rgba(255, 255, 255, 0.06),
+      inset 0 -2px 0 rgba(0, 0, 0, 0.5);
+    filter: brightness(1);
+  }
+  50% {
+    box-shadow:
+      inset 0 2px 0 rgba(255, 255, 255, 0.06),
+      inset 0 -2px 0 rgba(0, 0, 0, 0.5),
+      0 0 12px 2px rgba(240, 133, 133, 0.7);
+    filter: brightness(1.2);
+  }
+}
+.countdown-urgent {
+  animation: countdown-urgent 0.8s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .countdown-urgent {
+    animation: none;
+  }
+}

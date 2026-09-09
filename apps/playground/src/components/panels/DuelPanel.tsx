@@ -1,0 +1,1718 @@
+import { useState, useEffect } from 'react'
+import { useCurrentAccount, useSignAndExecuteTransaction } from '@mysten/dapp-kit'
+import { Transaction } from '@mysten/sui/transactions'
+import { CONFIG, DUSDC_TYPE } from '../../config'
+import { client } from '../../lib/client'
+import {
+  txCreateDuel,
+  txJoinDuel,
+  txRevealDeck,
+  txFinalizeDuel,
+  txFinalizeDuelTestOneOracle,
+  txRefundDuel,
+  txSettleCard,
+  DuelCard
+} from '../../lib/duel-txb'
+import { buildMarketKey, txMint, readGetTradeAmounts } from '../../lib/predict-txb'
+
+const getBalanceValue = (balanceField: any): number => {
+  if (balanceField === null || balanceField === undefined) return 0
+  if (typeof balanceField === 'string' || typeof balanceField === 'number') {
+    return Number(balanceField)
+  }
+  if (typeof balanceField === 'object') {
+    const val = balanceField.fields?.value ?? balanceField.value ?? 0
+    return Number(val)
+  }
+  return 0
+}
+
+const getCoinDetails = (coinType: string) => {
+  if (!coinType) return { symbol: 'COIN', decimals: 6 }
+  if (coinType.endsWith('::SUI') || coinType === '0x2::sui::SUI') {
+    return { symbol: 'SUI', decimals: 9 }
+  }
+  if (coinType.includes('::dusdc::DUSDC') || coinType.includes('DUSDC')) {
+    return { symbol: 'dUSDC', decimals: 6 }
+  }
+  const parts = coinType.split('::')
+  const symbol = parts[parts.length - 1] || 'COIN'
+  return { symbol, decimals: 6 }
+}
+
+const snapToTick = (strike: bigint, minStrike: bigint, tickSize: bigint): bigint => {
+  if (strike < minStrike) return minStrike
+  return minStrike + ((strike - minStrike) / tickSize) * tickSize
+}
+
+const parseU64 = (bytes: number[]): bigint => {
+  let val = 0n
+  for (let i = bytes.length - 1; i >= 0; i--) {
+    val = (val << 8n) | BigInt(bytes[i])
+  }
+  return val
+}
+
+type SwipeShape = { isUp: boolean; quantity: number; premium: number; p_swiped: number }
+
+// Sui RPC unwraps `Option<Swipe>` to either `null` (None) or `{ type: '...::Swipe', fields: {...} }` (Some).
+// Older shape `{ fields: { vec: [...] } }` is also accepted defensively.
+const extractSwipe = (opt: any): SwipeShape | null => {
+  if (!opt) return null
+  const f = opt.fields ?? null
+  // Flattened: fields directly contains is_up/quantity/etc.
+  if (f && typeof f.is_up === 'boolean') {
+    return {
+      isUp: Boolean(f.is_up),
+      quantity: Number(f.quantity),
+      premium: Number(f.premium),
+      p_swiped: Number(f.p_swiped),
+    }
+  }
+  // Legacy: Option<T> as { fields: { vec: [{ fields: {...} }] } }
+  const vec = f?.vec
+  if (Array.isArray(vec) && vec.length > 0) {
+    const g = vec[0]?.fields ?? vec[0]
+    if (g && typeof g.is_up === 'boolean') {
+      return {
+        isUp: Boolean(g.is_up),
+        quantity: Number(g.quantity),
+        premium: Number(g.premium),
+        p_swiped: Number(g.p_swiped),
+      }
+    }
+  }
+  return null
+}
+
+const formatCountdown = (ms: number): string => {
+  if (ms <= 0) return 'Expired'
+  const totalSec = Math.floor(ms / 1000)
+  const h = Math.floor(totalSec / 3600)
+  const m = Math.floor((totalSec % 3600) / 60)
+  const s = totalSec % 60
+  if (h > 0) return `${h}h ${m}m ${s}s`
+  if (m > 0) return `${m}m ${s}s`
+  return `${s}s`
+}
+
+// BCS serialization helper for vector<Card>
+function serializeDeck(cards: DuelCard[]): Uint8Array {
+  const bytes = new Uint8Array(1 + cards.length * 40)
+  bytes[0] = cards.length // vector length prefix
+  let offset = 1
+  for (const card of cards) {
+    // Write oracleId (32 bytes)
+    const cleanHex = card.oracleId.replace(/^0x/, '').padStart(64, '0')
+    for (let i = 0; i < 32; i++) {
+      bytes[offset + i] = parseInt(cleanHex.slice(i * 2, i * 2 + 2), 16)
+    }
+    offset += 32
+    // Write strike (u64 little-endian, 8 bytes)
+    let temp = card.strike
+    for (let i = 0; i < 8; i++) {
+      bytes[offset + i] = Number(temp & 0xffn)
+      temp = temp >> 8n
+    }
+    offset += 8
+  }
+  return bytes
+}
+
+async function computeSha256(bytes: Uint8Array): Promise<number[]> {
+  const hashBuffer = await crypto.subtle.digest('SHA-256', bytes as any)
+  return Array.from(new Uint8Array(hashBuffer))
+}
+
+function toHex(bytes: number[]): string {
+  return '0x' + bytes.map(b => b.toString(16).padStart(2, '0')).join('')
+}
+
+interface PanelOutput {
+  type: 'success' | 'error' | 'info'
+  title: string
+  data: string
+  txDigest?: string
+}
+
+interface DuelPanelProps {
+  onOutput: (output: PanelOutput) => void
+}
+
+export default function DuelPanel({ onOutput }: DuelPanelProps) {
+  const account = useCurrentAccount()
+  const { mutateAsync: signAndExecute } = useSignAndExecuteTransaction()
+
+  // IDs
+  const [duelId, setDuelId] = useState<string>(() => {
+    return localStorage.getItem('flicky_active_duel_id') || ''
+  })
+  const [duelCoinType, setDuelCoinType] = useState<string>(() => {
+    return DUSDC_TYPE(CONFIG.dusdcPackageId)
+  })
+  const [oracleId, setOracleId] = useState<string>(CONFIG.marketOracleId)
+  const [managerId, setManagerId] = useState<string>(() => {
+    return localStorage.getItem('flicky_predict_manager_id') || ''
+  })
+
+  // Staking
+  const [stakeAmount, setStakeAmount] = useState<string>('3') // in dUSDC
+
+  // Deck generation state
+  const [generatedCards, setGeneratedCards] = useState<DuelCard[]>([])
+  const [generatedHash, setGeneratedHash] = useState<number[]>([])
+
+  // Duel on-chain state
+  const [duelDetails, setDuelDetails] = useState<any | null>(null)
+  const [detailsLoading, setDetailsLoading] = useState<boolean>(false)
+  const [loading, setLoading] = useState<boolean>(false)
+  const [oraclesInfo, setOraclesInfo] = useState<Record<string, {
+    isSettled: boolean;
+    settlementPrice: string | null;
+    expiry: number;
+    spotPrice: string;
+    status: string;
+  }>>({})
+
+  // Swipe inputs
+  const [swipeCardIdx, setSwipeCardIdx] = useState<number>(0)
+  const [swipeIsUp, setSwipeIsUp] = useState<boolean>(true)
+  const [swipeQty, setSwipeQty] = useState<string>('1') // e.g. 1 contract (1,000,000 micro-dUSDC)
+
+  // Deck composition: how many cards + which oracle (defaults to nearest expiry).
+  const [deckSize, setDeckSize] = useState<number>(5)
+  const [eligibleOracles, setEligibleOracles] = useState<
+    { id: string; expiry: bigint; spot: bigint; minStrike: bigint; tickSize: bigint }[]
+  >([])
+  const [selectedOracleId, setSelectedOracleId] = useState<string>('')
+  const [oraclesLoading, setOraclesLoading] = useState<boolean>(false)
+  const [oraclesError, setOraclesError] = useState<string>('')
+
+  // 1-second tick for the oracle countdown + spot-based PnL projection.
+  const [nowMs, setNowMs] = useState<number>(() => Date.now())
+
+  // Save active duelId in localStorage
+  useEffect(() => {
+    localStorage.setItem('flicky_active_duel_id', duelId)
+    if (duelId) {
+      fetchDuelDetails()
+    } else {
+      setDuelDetails(null)
+    }
+  }, [duelId])
+
+  // Sync manager ID if changed in other panels
+  useEffect(() => {
+    const handleStorageChange = () => {
+      setManagerId(localStorage.getItem('flicky_predict_manager_id') || '')
+    }
+    window.addEventListener('storage', handleStorageChange)
+    return () => window.removeEventListener('storage', handleStorageChange)
+  }, [])
+
+  // 1-second tick for countdown display.
+  useEffect(() => {
+    const id = window.setInterval(() => setNowMs(Date.now()), 1000)
+    return () => window.clearInterval(id)
+  }, [])
+
+  // Load eligible oracles once on mount so the deck-builder UI can show the
+  // dropdown without a separate fetch step. Nearest-expiry sorted.
+  const loadEligibleOracles = async () => {
+    if (!CONFIG.predictPackageId) {
+      setOraclesError('VITE_PREDICT_PACKAGE_ID not set in .env.local')
+      return
+    }
+    setOraclesLoading(true)
+    setOraclesError('')
+    try {
+      const list = await findEligibleOracles(10)
+      setEligibleOracles(list)
+      if (list.length > 0) {
+        setSelectedOracleId((cur) => cur || list[0].id) // default = nearest expiry
+      }
+    } catch (err: any) {
+      setOraclesError(err?.message || String(err))
+      console.warn('findEligibleOracles failed:', err)
+    } finally {
+      setOraclesLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    loadEligibleOracles()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // Find eligible BTC oracles for deck creation. Strategy:
+  //  1. Pull the full list from DeepBook Predict indexer (fast, complete).
+  //  2. Fall back to on-chain `OracleCreated` events if the indexer is down.
+  //  3. multiGetObjects to read live spot + verify active + filter expiry.
+  // Returns oracles sorted by nearest-expiry first.
+  const findEligibleOracles = async (limit: number = 10): Promise<{ id: string; expiry: bigint; spot: bigint; minStrike: bigint; tickSize: bigint }[]> => {
+    const nowMsBig = BigInt(Date.now())
+    // Require ≥20min headroom so the oracle stays live through the typical
+    // create→join→reveal→swipe cycle. Nearest-expiry oracles too close to
+    // expiry abort `predict::mint::assert_live_oracle` mid-game.
+    const headroomMs = 20n * 60_000n
+
+    const candidates: string[] = []
+    const uniqueIds = new Set<string>()
+    const oracleGridMap = new Map<string, { minStrike: bigint; tickSize: bigint }>()
+
+    // 1. Primary source: indexer API. Returns ALL indexed oracles (active +
+    //    pending + settled) so we can pick from a much wider pool than
+    //    paginating raw events.
+    let indexerOk = false
+    if (CONFIG.predictObjectId) {
+      try {
+        const res = await fetch(
+          `https://predict-server.testnet.mystenlabs.com/predicts/${CONFIG.predictObjectId}/oracles`
+        )
+        if (res.ok) {
+          const data = await res.json()
+          if (Array.isArray(data)) {
+            indexerOk = true
+            for (const item of data) {
+              if (item.underlying_asset !== 'BTC') continue
+              const expiry = BigInt(item.expiry ?? '0')
+              if (expiry - nowMsBig < headroomMs) continue
+              const id = String(item.oracle_id || '')
+              if (!id || uniqueIds.has(id)) continue
+              uniqueIds.add(id)
+              candidates.push(id)
+              oracleGridMap.set(id, {
+                minStrike: BigInt(item.min_strike ?? '0'),
+                tickSize: BigInt(item.tick_size ?? '1000000000'),
+              })
+            }
+          }
+        }
+      } catch (err) {
+        console.warn('Indexer fetch failed, falling back to on-chain events:', err)
+      }
+    }
+
+    // 2. Fallback: page through on-chain OracleCreated events.
+    if (!indexerOk || candidates.length === 0) {
+      let cursor: any = null
+      let pages = 0
+      const MAX_PAGES = 20
+      while (pages < MAX_PAGES) {
+        const evts: any = await client.queryEvents({
+          query: { MoveEventType: `${CONFIG.predictPackageId}::registry::OracleCreated` },
+          limit: 50,
+          cursor,
+          order: 'descending',
+        })
+        for (const e of evts.data) {
+          const p = e.parsedJson as {
+            oracle_id: string
+            underlying_asset: string
+            expiry?: string
+            min_strike?: string
+            tick_size?: string
+          }
+          if (p.underlying_asset !== 'BTC') continue
+          const expiry = BigInt(p.expiry ?? '0')
+          if (expiry - nowMsBig < headroomMs) continue
+          const id = p.oracle_id
+          if (uniqueIds.has(id)) continue
+          uniqueIds.add(id)
+          candidates.push(id)
+          oracleGridMap.set(id, {
+            minStrike: BigInt(p.min_strike ?? '0'),
+            tickSize: BigInt(p.tick_size ?? '1000000000'),
+          })
+        }
+        if (!evts.hasNextPage || !evts.nextCursor) break
+        cursor = evts.nextCursor
+        pages++
+      }
+    }
+
+    if (candidates.length === 0) {
+      throw new Error('No BTC oracle with future expiry. Wait for DeepBook keeper to publish a new slot.')
+    }
+
+    // 3. Verify on-chain: active + priced + not settled.
+    const objs = await client.multiGetObjects({
+      ids: candidates,
+      options: { showContent: true },
+    })
+
+    const eligible: { id: string; expiry: bigint; spot: bigint; minStrike: bigint; tickSize: bigint }[] = []
+    for (const obj of objs) {
+      if (obj.data?.content?.dataType !== 'moveObject') continue
+      const f = obj.data.content.fields as {
+        active?: boolean
+        expiry?: string
+        prices?: { fields?: { spot?: string; forward?: string } }
+        settlement_price?: any
+      }
+      const settled =
+        (typeof f.settlement_price === 'string' && f.settlement_price !== '0') ||
+        (typeof f.settlement_price === 'object' &&
+          f.settlement_price !== null &&
+          ((f.settlement_price as { fields?: { vec?: string[] } }).fields?.vec?.length ?? 0) > 0)
+      const spot = BigInt(f.prices?.fields?.spot ?? '0')
+      const forward = BigInt(f.prices?.fields?.forward ?? '0')
+      const expiry = BigInt(f.expiry ?? '0')
+      if (settled || !f.active || spot === 0n || forward === 0n) continue
+      if (expiry - nowMsBig < headroomMs) continue
+      const objId = obj.data?.objectId
+      if (!objId) continue
+      const grid = oracleGridMap.get(objId) || { minStrike: 0n, tickSize: 1_000_000_000n }
+      eligible.push({ id: objId, expiry, spot, minStrike: grid.minStrike, tickSize: grid.tickSize })
+    }
+
+    eligible.sort((a, b) => (a.expiry < b.expiry ? -1 : a.expiry > b.expiry ? 1 : 0))
+
+    if (eligible.length === 0) {
+      throw new Error(
+        `Found ${candidates.length} BTC oracle(s) with future expiry but none are active+priced+unsettled. ` +
+        `Wait for keeper to activate one.`
+      )
+    }
+
+    return eligible.slice(0, limit)
+  }
+
+  // Helper to retrieve and split staking coins
+  const getStakeCoin = async (tx: Transaction, amount: bigint, targetCoinType: string): Promise<any> => {
+    if (!account) throw new Error('Wallet not connected')
+
+    if (targetCoinType === '0x2::sui::SUI' || targetCoinType.endsWith('::SUI')) {
+      const [splitSui] = tx.splitCoins(tx.gas, [tx.pure.u64(amount)])
+      return splitSui
+    }
+
+    const coins = await client.getCoins({
+      owner: account.address,
+      coinType: targetCoinType
+    })
+
+    if (coins.data.length === 0) {
+      const coinInfo = getCoinDetails(targetCoinType)
+      throw new Error(`No ${coinInfo.symbol} coins found in your wallet. Please top up your wallet with ${coinInfo.symbol} first.`)
+    }
+
+    const totalBalance = coins.data.reduce((acc, c) => acc + BigInt(c.balance), 0n)
+    if (totalBalance < amount) {
+      const coinInfo = getCoinDetails(targetCoinType)
+      throw new Error(`Insufficient ${coinInfo.symbol} balance. Required: ${Number(amount) / (10 ** coinInfo.decimals)} ${coinInfo.symbol}, Available: ${Number(totalBalance) / (10 ** coinInfo.decimals)} ${coinInfo.symbol}`)
+    }
+
+    const [primary, ...rest] = coins.data.map(c => tx.object(c.coinObjectId))
+    if (rest.length > 0) {
+      tx.mergeCoins(primary, rest)
+    }
+    const [stakeCoin] = tx.splitCoins(primary, [tx.pure.u64(amount)])
+    return stakeCoin
+  }
+
+  // Generate 5-card deck strikes from 5 different active oracles
+  const handleGenerateDeck = async () => {
+    setLoading(true)
+    try {
+      // Build a multi-oracle deck: card[i] uses the i-th nearest-expiry oracle
+      // (wrapping around if there are fewer oracles than cards). The user's
+      // explicitly-selected oracle is moved to the front of the pool.
+      let pool = eligibleOracles
+      if (pool.length === 0) {
+        pool = await findEligibleOracles(20)
+        setEligibleOracles(pool)
+      }
+      if (pool.length === 0) throw new Error('No oracle available')
+
+      // Re-order pool so the selected oracle is first (default = nearest).
+      const selectedIdx = pool.findIndex((o) => o.id === selectedOracleId)
+      if (selectedIdx > 0) {
+        pool = [pool[selectedIdx], ...pool.slice(0, selectedIdx), ...pool.slice(selectedIdx + 1)]
+      }
+
+      const n = Math.max(1, Math.min(20, Math.floor(deckSize)))
+      if (n !== deckSize) setDeckSize(n)
+
+      // Pick one oracle per card. If N > pool.length, wrap around.
+      const cards: DuelCard[] = []
+      for (let i = 0; i < n; i++) {
+        const oracle = pool[i % pool.length]
+        const atm = snapToTick(oracle.spot, oracle.minStrike, oracle.tickSize)
+        cards.push({ oracleId: oracle.id, strike: atm, expiry: oracle.expiry })
+      }
+
+      const serialized = serializeDeck(cards)
+      const hash = await computeSha256(serialized)
+
+      setGeneratedCards(cards)
+      setGeneratedHash(hash)
+
+      const deckToStore = cards.map((c) => ({
+        oracleId: c.oracleId,
+        strike: c.strike.toString(),
+        expiry: c.expiry ? c.expiry.toString() : undefined,
+      }))
+      localStorage.setItem(`flicky_generated_deck_${hash.join(',')}`, JSON.stringify(deckToStore))
+
+      const uniqueOracles = new Set(cards.map((c) => c.oracleId)).size
+      onOutput({
+        type: 'success',
+        title: `Deck Generated (${n} cards, ${uniqueOracles} oracle${uniqueOracles === 1 ? '' : 's'})`,
+        data:
+          `Hash: ${toHex(hash)}\n\nCards (oracle → strike @ expiry):\n` +
+          cards
+            .map((c, i) => {
+              const mins = c.expiry ? Math.max(0, Math.floor((Number(c.expiry) - Date.now()) / 60000)) : '?'
+              return `  Card ${i}: ${c.oracleId.slice(0, 10)}… → $${(Number(c.strike) / 1e9).toFixed(2)} (exp ${mins}m)`
+            })
+            .join('\n'),
+      })
+    } catch (err: any) {
+      onOutput({
+        type: 'error',
+        title: 'Failed to Generate Deck',
+        data: err.message || String(err),
+      })
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  // Fetch Duel Details from on-chain
+  const [duelFetchError, setDuelFetchError] = useState<string>('')
+  const fetchDuelDetails = async () => {
+    if (!duelId || !duelId.startsWith('0x')) return
+    setDetailsLoading(true)
+    setDuelFetchError('')
+    try {
+      const res = await client.getObject({
+        id: duelId,
+        options: { showContent: true }
+      })
+      if (res.error) {
+        throw new Error(`getObject error: ${JSON.stringify(res.error)}`)
+      }
+      if (!res.data) {
+        setDuelDetails(null)
+        setDuelFetchError(`Object ${duelId.slice(0, 12)}… not found on chain.`)
+        return
+      }
+      const content = res.data.content as any
+      if (content && content.fields) {
+        setDuelDetails(content.fields)
+        const objType = res.data?.type || ''
+        const match = objType.match(/::duel::Duel<([^>]+)>/)
+        const extractedCoinType = match ? match[1] : DUSDC_TYPE(CONFIG.dusdcPackageId)
+        setDuelCoinType(extractedCoinType)
+
+        // If stake details exist, update state
+        if (content.fields.p0_stake) {
+          const coinInfo = getCoinDetails(extractedCoinType)
+          const rawVal = getBalanceValue(content.fields.p0_stake)
+          const val = rawVal / (10 ** coinInfo.decimals)
+          setStakeAmount(val.toString())
+        }
+
+        // Fetch oracle objects for each card
+        if (content.fields.cards && content.fields.cards.length > 0) {
+          const oracleIds = content.fields.cards.map((c: any) => c.fields.oracle_id)
+          const oracleObjects = await client.multiGetObjects({
+            ids: oracleIds,
+            options: { showContent: true }
+          })
+          const infoMap: Record<string, any> = {}
+          oracleObjects.forEach((obj) => {
+            if (obj.data && obj.data.content) {
+              const fields = (obj.data.content as any).fields
+              const isSettled = fields.settlement_price?.fields?.vec?.length > 0 || fields.settlement_price?.fields?.vec?.[0] !== undefined
+              let settlementPrice = null
+              if (fields.settlement_price?.fields?.vec && fields.settlement_price.fields.vec.length > 0) {
+                settlementPrice = (Number(fields.settlement_price.fields.vec[0]) / 1e9).toFixed(2)
+              }
+              const spotPrice = fields.prices?.fields?.spot ? (Number(fields.prices.fields.spot) / 1e9).toFixed(2) : '0'
+              const expiry = Number(fields.expiry || 0)
+              const isActive = fields.active
+
+              let statusText = 'Active'
+              if (isSettled) {
+                statusText = 'Settled'
+              } else if (Date.now() >= expiry) {
+                statusText = 'Pending Settlement'
+              } else if (!isActive) {
+                statusText = 'Inactive'
+              }
+
+              infoMap[obj.data.objectId] = {
+                isSettled,
+                settlementPrice,
+                spotPrice,
+                expiry,
+                status: statusText
+              }
+            }
+          })
+          setOraclesInfo(infoMap)
+        }
+      } else {
+        setDuelDetails(null)
+        setDuelFetchError('Object content has no fields — wrong type?')
+      }
+    } catch (err: any) {
+      console.error('Failed to fetch duel details:', err)
+      setDuelFetchError(err?.message || String(err))
+      // Keep prior duelDetails so the user can still see stale state on a transient RPC error.
+    } finally {
+      setDetailsLoading(false)
+    }
+  }
+
+  // Action: Create Duel
+  const handleCreateDuel = async () => {
+    if (!account) return
+    setLoading(true)
+    try {
+      const coinType = DUSDC_TYPE(CONFIG.dusdcPackageId)
+      const coinInfo = getCoinDetails(coinType)
+      const parsedStake = BigInt(Math.floor(parseFloat(stakeAmount) * (10 ** coinInfo.decimals)))
+
+      const tx = new Transaction()
+      const stakeCoin = await getStakeCoin(tx, parsedStake, coinType)
+      
+      txCreateDuel(tx, stakeCoin, generatedHash, generatedCards.length, coinType)
+
+      const result = await signAndExecute({
+        transaction: tx,
+      })
+
+      // Fetch transaction details to get object changes (wait until indexed)
+      const txData = await client.waitForTransaction({
+        digest: result.digest,
+        options: { showObjectChanges: true }
+      })
+
+      // Extract new Duel object ID from effects
+      const objectChanges = txData.objectChanges || []
+      const createdObj = objectChanges.find(
+        (change: any) =>
+          change.type === 'created' &&
+          change.objectType.includes('::duel::Duel<')
+      ) as any
+
+      if (createdObj) {
+        setDuelId(createdObj.objectId)
+        // Store current deck under this duel ID
+        const deckToStore = generatedCards.map(c => ({
+          oracleId: c.oracleId,
+          strike: c.strike.toString(),
+          expiry: c.expiry ? c.expiry.toString() : undefined
+        }))
+        localStorage.setItem(`flicky_duel_deck_${createdObj.objectId}`, JSON.stringify(deckToStore))
+      }
+
+      onOutput({
+        type: 'success',
+        title: 'Duel Created Successfully',
+        data: `Created Duel Object ID: ${createdObj?.objectId || 'Not found in tx effects'}\n\nStaked: ${stakeAmount} ${coinInfo.symbol}\nDeck Hash: ${toHex(generatedHash)}`,
+        txDigest: result.digest
+      })
+
+      setTimeout(fetchDuelDetails, 1500)
+    } catch (err: any) {
+      onOutput({
+        type: 'error',
+        title: 'Create Duel Failed',
+        data: err.message || String(err)
+      })
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  // Action: Join Duel
+  const handleJoinDuel = async () => {
+    if (!account || !duelId) return
+    setLoading(true)
+    try {
+      const coinType = duelCoinType
+      const coinInfo = getCoinDetails(coinType)
+      const parsedStake = BigInt(Math.floor(parseFloat(stakeAmount) * (10 ** coinInfo.decimals)))
+
+      const tx = new Transaction()
+      const stakeCoin = await getStakeCoin(tx, parsedStake, coinType)
+      
+      txJoinDuel(tx, duelId, stakeCoin, coinType)
+
+      const result = await signAndExecute({
+        transaction: tx,
+      })
+
+      onOutput({
+        type: 'success',
+        title: 'Joined Duel Successfully',
+        data: `Successfully joined duel ${duelId} with stake ${stakeAmount} ${coinInfo.symbol}`,
+        txDigest: result.digest
+      })
+
+      setTimeout(fetchDuelDetails, 1500)
+    } catch (err: any) {
+      onOutput({
+        type: 'error',
+        title: 'Join Duel Failed',
+        data: err.message || String(err)
+      })
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  // Action: Reveal Deck
+  const handleRevealDeck = async () => {
+    if (!account || !duelId) return
+
+    setLoading(true)
+    try {
+      // Attempt to load cards from state or localStorage
+      let cards = generatedCards
+      if (cards.length === 0) {
+        // Fallback: look up using saved keys
+        const localDeck = localStorage.getItem(`flicky_duel_deck_${duelId}`)
+        if (localDeck) {
+          const parsed = JSON.parse(localDeck) as any[]
+          cards = parsed.map(c => ({
+            oracleId: c.oracleId,
+            strike: BigInt(c.strike),
+            expiry: c.expiry ? BigInt(c.expiry) : undefined
+          }))
+        } else if (duelDetails?.deck_hash) {
+          // Look up by deck hash
+          const hashString = duelDetails.deck_hash.join(',')
+          const hashDeck = localStorage.getItem(`flicky_generated_deck_${hashString}`)
+          if (hashDeck) {
+            const parsed = JSON.parse(hashDeck) as any[]
+            cards = parsed.map(c => ({
+              oracleId: c.oracleId,
+              strike: BigInt(c.strike),
+              expiry: c.expiry ? BigInt(c.expiry) : undefined
+            }))
+          }
+        }
+      }
+
+      if (cards.length === 0) {
+        throw new Error('No locally saved deck coordinates found for this duel. Generate a new deck or make sure you are using the same browser session.')
+      }
+
+      const tx = new Transaction()
+      txRevealDeck(tx, duelId, cards, duelCoinType)
+
+      const result = await signAndExecute({
+        transaction: tx,
+      })
+
+      onOutput({
+        type: 'success',
+        title: 'Deck Revealed Successfully',
+        data: `Revealed deck to duel ${duelId}:\n` +
+          cards.map((c, i) => `Card ${i}: Oracle ${c.oracleId.slice(0, 10)}..., Strike: ${Number(c.strike) / 1e9}`).join('\n'),
+        txDigest: result.digest
+      })
+
+      setTimeout(fetchDuelDetails, 1500)
+    } catch (err: any) {
+      onOutput({
+        type: 'error',
+        title: 'Reveal Deck Failed',
+        data: err.message || String(err)
+      })
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  // Action: Record Swipe
+  const handleRecordSwipe = async () => {
+    if (!account || !duelId) return
+    if (!managerId) {
+      onOutput({
+        type: 'error',
+        title: 'Validation Error',
+        data: 'PredictManager ID is missing. Build one in the Manager tab first.',
+      })
+      return
+    }
+
+    setLoading(true)
+    try {
+      const parsedQty = BigInt(Math.floor(parseFloat(swipeQty) * 1_000_000)) // Scaled quantity
+
+      // Find the card to swipe
+      let activeOracle = oracleId
+      let activeStrike = 1000n
+      if (duelDetails && duelDetails.cards && duelDetails.cards[swipeCardIdx]) {
+        activeOracle = duelDetails.cards[swipeCardIdx].fields.oracle_id
+        activeStrike = BigInt(duelDetails.cards[swipeCardIdx].fields.strike)
+      } else {
+        const localCard = generatedCards[swipeCardIdx]
+        if (localCard) {
+          activeOracle = localCard.oracleId
+          activeStrike = localCard.strike
+        }
+      }
+
+      // 1. Fetch oracle details to get expiry if not locally available
+      let expiryVal = 0n
+      const cardObj = generatedCards.find(c => c.oracleId === activeOracle)
+      if (cardObj && cardObj.expiry) {
+        expiryVal = cardObj.expiry
+      } else {
+        const obj = await client.getObject({
+          id: activeOracle,
+          options: { showContent: true }
+        })
+        const expStr = (obj.data?.content as any)?.fields?.expiry
+        if (!expStr) {
+          throw new Error(`Failed to read expiry from oracle object ${activeOracle}`)
+        }
+        expiryVal = BigInt(expStr)
+      }
+
+      // 2. Estimate premium cost via get_trade_amounts devInspect
+      onOutput({
+        type: 'info',
+        title: 'Pricing Preview',
+        data: 'Querying on-chain premium price for swipe...'
+      })
+
+      const inspectTx = new Transaction()
+      const mkInspect = buildMarketKey(inspectTx, activeOracle, expiryVal, activeStrike, swipeIsUp)
+      readGetTradeAmounts(inspectTx, activeOracle, mkInspect, parsedQty)
+
+      const inspectResult = await client.devInspectTransactionBlock({
+        sender: account.address,
+        transactionBlock: inspectTx,
+      })
+
+      if (inspectResult.error) {
+        throw new Error(`devInspect failed: ${inspectResult.error}`)
+      }
+
+      if (inspectResult.effects?.status?.status === 'failure') {
+        throw new Error(`On-chain dry-run reverted: ${inspectResult.effects.status.error}`)
+      }
+
+      const returnValues = inspectResult.results?.[1]?.returnValues
+      if (!returnValues || returnValues.length === 0) {
+        throw new Error('Failed to query estimated premium from DeepBook Predict on-chain pricing (empty return values)')
+      }
+
+      const mintCostRaw = parseU64(returnValues[0][0])
+      const premiumVal = mintCostRaw
+
+      // 3. Build and execute atomic PTB
+      const realTx = new Transaction()
+      const mkReal = buildMarketKey(realTx, activeOracle, expiryVal, activeStrike, swipeIsUp)
+      
+      txMint(realTx, managerId, activeOracle, mkReal, parsedQty, DUSDC_TYPE(CONFIG.dusdcPackageId))
+
+      // Snapshots premium + p_swiped from `predict::get_trade_amounts` on-chain.
+      realTx.moveCall({
+        target: `${CONFIG.flickyPackageId}::duel::record_swipe`,
+        typeArguments: [duelCoinType],
+        arguments: [
+          realTx.object(duelId),
+          realTx.object(managerId),
+          realTx.object(CONFIG.predictObjectId),
+          realTx.object(activeOracle),
+          realTx.pure.u64(BigInt(swipeCardIdx)),
+          realTx.pure.bool(swipeIsUp),
+          realTx.pure.u64(parsedQty),
+          realTx.object(CONFIG.CLOCK_ID)
+        ]
+      })
+
+      const result = await signAndExecute({
+        transaction: realTx,
+      })
+
+      onOutput({
+        type: 'success',
+        title: 'Swipe Recorded Successfully',
+        data: `Recorded swipe for Card ${swipeCardIdx}:\nDirection: ${swipeIsUp ? 'UP' : 'DOWN'}\nQuantity: ${swipeQty} contracts\nPremium Paid: ${Number(premiumVal) / 1e6} dUSDC`,
+        txDigest: result.digest
+      })
+
+      setTimeout(fetchDuelDetails, 1500)
+    } catch (err: any) {
+      onOutput({
+        type: 'error',
+        title: 'Record Swipe Failed',
+        data: err.message || String(err)
+      })
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const findManagerOnChain = async (address: string) => {
+    try {
+      const pkgId = CONFIG.predictPackageId.split('::')[0]
+      const events = await client.queryEvents({
+        query: {
+          MoveEventType: `${pkgId}::predict_manager::PredictManagerCreated`,
+        },
+        order: 'descending',
+      })
+
+      const found = events.data.find(
+        (evt: any) => (evt.parsedJson as any)?.owner === address
+      )
+
+      if (found && (found.parsedJson as any)?.manager_id) {
+        return (found.parsedJson as any).manager_id as string
+      }
+    } catch (err) {
+      console.error('Failed to query manager from onchain events:', err)
+    }
+    return null
+  }
+
+  // Action: Finalize Duel (one-shot — scores all N cards + distributes payout)
+  const handleFinalizeDuel = async () => {
+    if (!account || !duelId) return
+    setLoading(true)
+    try {
+      if (!duelDetails?.creator || !duelDetails?.challenger) {
+        throw new Error('Duel details not loaded or incomplete')
+      }
+
+      onOutput({
+        type: 'info',
+        title: 'Resolving Managers',
+        data: 'Looking up PredictManager IDs for creator and challenger...'
+      })
+
+      const p0Manager = await findManagerOnChain(duelDetails.creator)
+      const p1Manager = await findManagerOnChain(duelDetails.challenger)
+      if (!p0Manager || !p1Manager) {
+        throw new Error(`Failed to find PredictManager for creator (${duelDetails.creator.slice(0, 10)}...) or challenger (${duelDetails.challenger.slice(0, 10)}...) on-chain.`)
+      }
+
+      // Two-phase finalize: settle each card against its OWN oracle, then
+      // call `finalize` to distribute the pot. Chain everything into one
+      // PTB so the resolution is atomic.
+      const cardRefs = (duelDetails?.cards ?? []) as Array<{
+        fields: { oracle_id: string }
+      }>
+      if (cardRefs.length === 0) {
+        throw new Error('Duel has no revealed cards — reveal_deck must run first.')
+      }
+      const tx = new Transaction()
+      cardRefs.forEach((c, idx) => {
+        txSettleCard(
+          tx,
+          duelId,
+          p0Manager,
+          p1Manager,
+          c.fields.oracle_id,
+          idx,
+          duelCoinType,
+        )
+      })
+      txFinalizeDuel(tx, duelId, duelCoinType)
+
+      const result = await signAndExecute({
+        transaction: tx,
+      })
+
+      onOutput({
+        type: 'success',
+        title: 'Duel Finalized Successfully',
+        data: `Duel ${duelId} finalized. Settled ${cardRefs.length} card(s) on per-oracle settlement, payouts distributed.`,
+        txDigest: result.digest
+      })
+
+      setTimeout(fetchDuelDetails, 1500)
+    } catch (err: any) {
+      onOutput({
+        type: 'error',
+        title: 'Finalize Duel Failed',
+        data: err.message || String(err)
+      })
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  // Action: Finalize via test PTB (single oracle, dev-only).
+  // Picks the first oracle with a usable price (Settled if available,
+  // otherwise any oracle with a spot price). Contract falls back to spot
+  // when settlement_price is absent.
+  const handleFinalizeTestOneOracle = async () => {
+    if (!account || !duelId) return
+    setLoading(true)
+    try {
+      if (!duelDetails?.cards?.length) {
+        throw new Error('Duel cards not loaded')
+      }
+
+      const oracleIds = (duelDetails.cards as any[])
+        .map((c: any) => c?.fields?.oracle_id as string | undefined)
+        .filter((o): o is string => !!o)
+
+      // Prefer a settled oracle; fall back to any oracle with spot price.
+      const settled = oracleIds.find((oid) => oraclesInfo[oid]?.status === 'Settled')
+      const anyWithSpot = oracleIds.find((oid) => {
+        const sp = oraclesInfo[oid]?.spotPrice
+        return sp && Number(sp) > 0
+      })
+      const oracleId = settled || anyWithSpot
+
+      if (!oracleId) {
+        throw new Error('No oracle in deck has a usable price yet. Refresh and try again.')
+      }
+
+      const tx = new Transaction()
+      txFinalizeDuelTestOneOracle(tx, duelId, oracleId, duelCoinType)
+
+      const result = await signAndExecute({ transaction: tx })
+
+      onOutput({
+        type: 'success',
+        title: 'Finalized via test PTB',
+        data: `Duel ${duelId} finalized using oracle ${oracleId} ` +
+              `(${oraclesInfo[oracleId]?.status || 'unknown'}). ` +
+              `Score applied to all ${duelDetails?.cards?.length ?? '?'} cards (test mode — anti-replay skipped, ` +
+              `falls back to spot price if not settled).`,
+        txDigest: result.digest,
+      })
+
+      setTimeout(fetchDuelDetails, 1500)
+    } catch (err: any) {
+      onOutput({
+        type: 'error',
+        title: 'Test finalize failed',
+        data: err.message || String(err),
+      })
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  // Action: Refund Duel
+  const handleRefundDuel = async () => {
+    if (!account || !duelId) return
+    setLoading(true)
+    try {
+      const tx = new Transaction()
+      txRefundDuel(tx, duelId, duelCoinType)
+
+      const result = await signAndExecute({
+        transaction: tx,
+      })
+
+      onOutput({
+        type: 'success',
+        title: 'Duel Refunded/Cancelled Successfully',
+        data: `Duel ${duelId} was successfully refunded or cancelled.`,
+        txDigest: result.digest
+      })
+
+      setTimeout(fetchDuelDetails, 1500)
+    } catch (err: any) {
+      onOutput({
+        type: 'error',
+        title: 'Refund Duel Failed',
+        data: err.message || String(err)
+      })
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  // Render status helper
+  const getStatusText = (status: number) => {
+    switch (status) {
+      case 1: return <span className="rounded bg-yellow-950 px-2.5 py-1 text-xs font-semibold text-yellow-300">PENDING JOIN</span>
+      case 2: return <span className="rounded bg-blue-950 px-2.5 py-1 text-xs font-semibold text-blue-300">ACTIVE PLAY</span>
+      case 3: return <span className="rounded bg-green-950 px-2.5 py-1 text-xs font-semibold text-green-300">COMPLETE</span>
+      default: return <span className="rounded bg-gray-800 px-2.5 py-1 text-xs font-semibold text-gray-400">UNKNOWN</span>
+    }
+  }
+
+  return (
+    <div className="space-y-6">
+      {/* Title */}
+      <div>
+        <h2 className="text-xl font-bold text-gray-50 flex items-center gap-2">
+          ⚔️ Flicky Duel Panel
+        </h2>
+        <p className="mt-1 text-sm text-gray-400">
+          Create, play, settle, and finalize N-card prediction matches
+        </p>
+      </div>
+
+      {/* Connection warning */}
+      {!account && (
+        <div className="rounded border border-red-900 bg-red-950/30 p-4 text-sm text-red-200">
+          Please connect your wallet to start testing the Duel functions.
+        </div>
+      )}
+
+      {/* Main Configurations Section */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        {/* Panel Configs */}
+        <div className="space-y-4 rounded-lg border border-gray-800 bg-gray-900/50 p-4">
+          <h3 className="text-sm font-semibold text-gray-300 border-b border-gray-800 pb-2">Configurations</h3>
+          <div>
+            <label className="block text-xs font-medium text-gray-400">Duel ID</label>
+            <input
+              type="text"
+              value={duelId}
+              onChange={(e) => setDuelId(e.target.value.trim())}
+              placeholder="0x..."
+              className="mt-1 w-full rounded border border-gray-800 bg-gray-950 px-3 py-2 text-sm focus:border-blue-600 focus:outline-none"
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-400">PredictManager ID (Staker)</label>
+            <input
+              type="text"
+              value={managerId}
+              onChange={(e) => {
+                setManagerId(e.target.value.trim())
+                localStorage.setItem('flicky_predict_manager_id', e.target.value.trim())
+              }}
+              placeholder="0x..."
+              className="mt-1 w-full rounded border border-gray-800 bg-gray-950 px-3 py-2 text-sm focus:border-blue-600 focus:outline-none"
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-400">Oracle ID (For Deck Gen)</label>
+            <input
+              type="text"
+              value={oracleId}
+              onChange={(e) => setOracleId(e.target.value.trim())}
+              placeholder="0x..."
+              className="mt-1 w-full rounded border border-gray-800 bg-gray-950 px-3 py-2 text-sm focus:border-blue-600 focus:outline-none"
+            />
+          </div>
+        </div>
+
+        {/* Duel On-Chain Status Card */}
+        <div className="space-y-3 rounded-lg border border-gray-800 bg-gray-900/50 p-4">
+          <div className="flex items-center justify-between border-b border-gray-800 pb-2">
+            <h3 className="text-sm font-semibold text-gray-300">Active Duel Status</h3>
+            <button
+              onClick={fetchDuelDetails}
+              disabled={detailsLoading || !duelId}
+              className="rounded bg-gray-800 px-2 py-1 text-xs font-medium text-gray-200 hover:bg-gray-700 disabled:opacity-50"
+            >
+              {detailsLoading ? 'Refreshing...' : '🔄 Refresh'}
+            </button>
+          </div>
+
+          {duelDetails ? (
+            <div className="space-y-2 text-xs">
+              <div className="flex justify-between">
+                <span className="text-gray-400">Status:</span>
+                <span>{getStatusText(duelDetails.status)}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-gray-400">Creator (P0):</span>
+                <span className="font-mono text-[10px]" title={duelDetails.creator}>{duelDetails.creator.slice(0, 10)}...</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-gray-400">Challenger (P1):</span>
+                <span className="font-mono text-[10px]" title={duelDetails.challenger}>
+                  {duelDetails.challenger === '0x0000000000000000000000000000000000000000000000000000000000000000' ? 'None yet' : `${duelDetails.challenger.slice(0, 10)}...`}
+                </span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-gray-400">P0 Stake:</span>
+                <span>
+                  {getBalanceValue(duelDetails.p0_stake) / (10 ** getCoinDetails(duelCoinType).decimals)}{' '}
+                  {getCoinDetails(duelCoinType).symbol}
+                </span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-gray-400">P1 Stake:</span>
+                <span>
+                  {getBalanceValue(duelDetails.p1_stake) / (10 ** getCoinDetails(duelCoinType).decimals)}{' '}
+                  {getCoinDetails(duelCoinType).symbol}
+                </span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-gray-400">Swipes Progress:</span>
+                <span>P0: {duelDetails.p0_next_card_idx}/{duelDetails.deck_size ?? '?'} | P1: {duelDetails.p1_next_card_idx}/{duelDetails.deck_size ?? '?'}</span>
+              </div>
+              {/* Per-duel PnL: derived from this Duel object only.
+                  Pre-finalize: projection using current spot price (settlement_price > strike ↔ UP).
+                  Post-finalize: actual on-chain p0_payout / p1_payout / premium. */}
+              {(() => {
+                const isComplete = duelDetails.status === 3
+                const summarize = (slot: 'p0' | 'p1') => {
+                  const swipes = (slot === 'p0' ? duelDetails.p0_swipes : duelDetails.p1_swipes) as any[]
+                  let totalPremium = 0
+                  let projectedPayout = 0
+                  let cardsSwiped = 0
+                  let cardsScored = 0 // cards where we can score (settled or spot available)
+                  let cardsCorrect = 0
+                  for (let i = 0; i < (swipes?.length ?? 0); i++) {
+                    const sw = extractSwipe(swipes[i])
+                    if (!sw) continue
+                    cardsSwiped++
+                    totalPremium += sw.premium
+                    const card = duelDetails.cards?.[i]
+                    const oracleId = card?.fields?.oracle_id
+                    const strikeRaw = Number(card?.fields?.strike ?? 0)
+                    const info = oracleId ? oraclesInfo[oracleId] : null
+                    // Prefer real settlement_price; otherwise project from spot.
+                    const refStr = info?.settlementPrice || info?.spotPrice
+                    if (!refStr || !strikeRaw) continue
+                    const refRaw = Math.floor(Number(refStr) * 1e9)
+                    const actualUp = refRaw > strikeRaw
+                    const correct = actualUp === sw.isUp
+                    cardsScored++
+                    if (correct) {
+                      projectedPayout += sw.quantity
+                      cardsCorrect++
+                    }
+                  }
+                  return { totalPremium, projectedPayout, cardsSwiped, cardsScored, cardsCorrect }
+                }
+
+                const p0 = summarize('p0')
+                const p1 = summarize('p1')
+
+                // On-chain (post-finalize) values when available.
+                const p0PayoutFinal = Number(duelDetails.p0_payout ?? 0)
+                const p1PayoutFinal = Number(duelDetails.p1_payout ?? 0)
+                const p0PremiumFinal = Number(duelDetails.p0_premium ?? 0)
+                const p1PremiumFinal = Number(duelDetails.p1_premium ?? 0)
+                const haveFinal = isComplete && (p0PayoutFinal + p1PayoutFinal + p0PremiumFinal + p1PremiumFinal) > 0
+
+                // Choose data source for display.
+                const p0Payout = haveFinal ? p0PayoutFinal : p0.projectedPayout
+                const p1Payout = haveFinal ? p1PayoutFinal : p1.projectedPayout
+                const p0Premium = haveFinal ? p0PremiumFinal : p0.totalPremium
+                const p1Premium = haveFinal ? p1PremiumFinal : p1.totalPremium
+
+                // Subtraction-less PnL ranking, matches on-chain finalize math.
+                const val0 = p0Payout + p1Premium
+                const val1 = p1Payout + p0Premium
+
+                const fmt = (raw: number) => (raw / 1e6).toFixed(4)
+                const netP0 = p0Payout - p0Premium
+                const netP1 = p1Payout - p1Premium
+
+                return (
+                  <div className="border-t border-gray-800 pt-2 mt-2 space-y-2">
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-gray-400 font-medium">
+                        {haveFinal ? 'Final PnL (on-chain)' : 'Projected PnL (this duel only)'}
+                      </span>
+                      <span className="text-[9px] text-gray-600 font-mono">
+                        {haveFinal
+                          ? 'from DuelFinalized'
+                          : `based on current ${duelDetails.cards?.length ? 'oracle spot' : '— no deck'}`}
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2 text-[11px]">
+                      {(['p0', 'p1'] as const).map((slot) => {
+                        const s = slot === 'p0' ? p0 : p1
+                        const payout = slot === 'p0' ? p0Payout : p1Payout
+                        const premium = slot === 'p0' ? p0Premium : p1Premium
+                        const net = slot === 'p0' ? netP0 : netP1
+                        const isLeading = (slot === 'p0' && val0 > val1) || (slot === 'p1' && val1 > val0)
+                        const isTied = val0 === val1
+                        const netColor = net > 0 ? 'text-green-400' : net < 0 ? 'text-red-400' : 'text-gray-300'
+                        return (
+                          <div key={slot} className="rounded border border-gray-800 bg-gray-950/40 p-2 space-y-0.5">
+                            <div className="flex items-center justify-between">
+                              <span className="text-gray-500 text-[9px] uppercase tracking-wider">
+                                {slot === 'p0' ? 'P0 (Creator)' : 'P1 (Challenger)'}
+                              </span>
+                              {!haveFinal && s.cardsSwiped > 0 && (
+                                <span className="text-[9px] text-gray-600 font-mono">
+                                  {s.cardsCorrect}/{s.cardsScored} correct
+                                </span>
+                              )}
+                              {haveFinal && (
+                                <span className={`text-[9px] font-bold ${isTied ? 'text-gray-400' : isLeading ? 'text-green-400' : 'text-gray-500'}`}>
+                                  {isTied ? 'TIE' : isLeading ? '🏆 WIN' : 'LOSS'}
+                                </span>
+                              )}
+                            </div>
+                            <div className={`font-mono font-bold ${netColor}`}>
+                              {net >= 0 ? '+' : ''}{fmt(net)} dUSDC
+                            </div>
+                            <div className="text-gray-500 text-[9px] font-mono">
+                              payout {fmt(payout)} − premium {fmt(premium)}
+                            </div>
+                            {!haveFinal && s.cardsSwiped === 0 && (
+                              <div className="text-gray-600 text-[9px] italic">No swipes submitted yet</div>
+                            )}
+                          </div>
+                        )
+                      })}
+                    </div>
+                    {!haveFinal && (p0.cardsSwiped > 0 || p1.cardsSwiped > 0) && (
+                      <div className="text-[9px] text-gray-600 leading-tight">
+                        Projection uses current oracle spot (or settled price if available) vs each
+                        card's strike. Real PnL is computed by <code className="text-gray-500">finalize</code> using
+                        the final <code className="text-gray-500">settlement_price</code> at expiry.
+                      </div>
+                    )}
+                  </div>
+                )
+              })()}
+
+              {duelDetails.cards && duelDetails.cards.length > 0 && (
+                <div className="border-t border-gray-800 pt-2 mt-2 space-y-2">
+                  <span className="text-gray-400 block mb-1 font-medium">Deck Cards & Oracle Status:</span>
+                  <div className="space-y-2">
+                    {duelDetails.cards.map((c: any, i: number) => {
+                      const oracleId = c.fields.oracle_id
+                      const strike = (Number(c.fields.strike) / 1e9).toFixed(2)
+
+                      const info = oraclesInfo[oracleId]
+                      const expiryMs = info?.expiry ?? 0
+                      const expiryTime = expiryMs ? new Date(expiryMs).toLocaleString() : 'Loading...'
+                      const remainingMs = expiryMs ? expiryMs - nowMs : 0
+                      const countdown = !expiryMs
+                        ? '—'
+                        : remainingMs <= 0
+                          ? 'Expired'
+                          : formatCountdown(remainingMs)
+                      const status = info?.status || 'Loading...'
+                      const settlementPrice = info?.settlementPrice ? `$${info.settlementPrice}` : 'N/A'
+                      const spotPrice = info?.spotPrice ? `$${info.spotPrice}` : 'N/A'
+                      const settled = status === 'Settled'
+
+                      let statusBadge = (
+                        <span className="rounded bg-gray-850 px-1.5 py-0.5 text-[9px] font-mono text-gray-400">
+                          {status}
+                        </span>
+                      )
+                      if (settled) {
+                        statusBadge = (
+                          <span className="rounded bg-green-950 px-1.5 py-0.5 text-[9px] font-mono text-green-400 border border-green-900">
+                            Settled ({settlementPrice})
+                          </span>
+                        )
+                      } else if (status === 'Pending Settlement') {
+                        statusBadge = (
+                          <span className="rounded bg-yellow-950 px-1.5 py-0.5 text-[9px] font-mono text-yellow-400 border border-yellow-900 animate-pulse">
+                            Awaiting Settle (Spot: {spotPrice})
+                          </span>
+                        )
+                      } else if (status === 'Active') {
+                        statusBadge = (
+                          <span className="rounded bg-blue-950 px-1.5 py-0.5 text-[9px] font-mono text-blue-400 border border-blue-900">
+                            Active (Spot: {spotPrice})
+                          </span>
+                        )
+                      }
+
+                      return (
+                        <div key={i} className="flex flex-col sm:flex-row sm:items-center justify-between p-2.5 rounded border border-gray-800 bg-gray-950/40 gap-2">
+                          <div className="flex items-center gap-3">
+                            <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-gray-800 text-[10px] font-bold text-gray-300">
+                              {i}
+                            </span>
+                            <div className="space-y-0.5 text-left">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <span className="font-semibold text-gray-200">Card {i} (Strike: ${strike})</span>
+                                {statusBadge}
+                              </div>
+                              <span className="block text-[10px] text-gray-500 font-mono truncate max-w-[280px]" title={oracleId}>
+                                Oracle: {oracleId}
+                              </span>
+                            </div>
+                          </div>
+                          <div className="text-left sm:text-right text-[10px] font-mono space-y-0.5">
+                            <span className="block text-gray-500 text-[9px] uppercase tracking-wider font-bold">Expires in</span>
+                            <span className={
+                              remainingMs <= 0
+                                ? 'text-red-400 font-bold'
+                                : remainingMs < 60_000
+                                  ? 'text-yellow-400 font-bold'
+                                  : 'text-gray-200'
+                            }>
+                              {countdown}
+                            </span>
+                            <span className="block text-gray-500 text-[9px]" title={expiryTime}>
+                              @ {expiryTime}
+                            </span>
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="flex h-32 flex-col items-center justify-center gap-2 text-xs text-gray-500">
+              {detailsLoading ? (
+                <span>⏳ Fetching duel...</span>
+              ) : duelFetchError ? (
+                <>
+                  <span className="text-red-400">❌ Failed to load duel</span>
+                  <span className="text-[10px] text-red-300 max-w-md text-center break-words">
+                    {duelFetchError}
+                  </span>
+                </>
+              ) : (
+                <span>No active duel object loaded. Put a Duel ID above to fetch.</span>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Steps Section */}
+      <div className="space-y-4">
+        {/* Step 1: Create or Join */}
+        <div className="rounded-lg border border-gray-800 bg-gray-900/30 p-4 space-y-4">
+          <div className="flex items-center gap-2 border-b border-gray-800 pb-2">
+            <span className="flex h-5 w-5 items-center justify-center rounded-full bg-blue-600 text-xs font-bold text-white">1</span>
+            <h4 className="text-sm font-semibold text-gray-200">Start Duel (Create or Join)</h4>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div className="space-y-3">
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="text-[10px] font-medium text-gray-400 block">Stake ({getCoinDetails(duelCoinType).symbol})</label>
+                  <input
+                    type="number"
+                    step="1"
+                    value={stakeAmount}
+                    onChange={(e) => setStakeAmount(e.target.value)}
+                    className="mt-1 w-full rounded border border-gray-800 bg-gray-950 px-2 py-1.5 text-xs focus:border-blue-600 focus:outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="text-[10px] font-medium text-gray-400 block">Cards (1–20)</label>
+                  <input
+                    type="number"
+                    min={1}
+                    max={20}
+                    step={1}
+                    value={deckSize}
+                    onChange={(e) => setDeckSize(Math.max(1, Math.min(20, Number(e.target.value) || 1)))}
+                    className="mt-1 w-full rounded border border-gray-800 bg-gray-950 px-2 py-1.5 text-xs focus:border-blue-600 focus:outline-none"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <div className="flex items-center justify-between">
+                  <label className="text-[10px] font-medium text-gray-400 block">
+                    Oracle (sorted by nearest expiry)
+                  </label>
+                  <button
+                    type="button"
+                    onClick={loadEligibleOracles}
+                    disabled={oraclesLoading}
+                    className="text-[10px] text-blue-400 hover:text-blue-300 disabled:opacity-50"
+                    title="Re-fetch eligible BTC oracles"
+                  >
+                    {oraclesLoading ? '⏳ loading…' : '🔄 refresh'}
+                  </button>
+                </div>
+                <select
+                  value={selectedOracleId}
+                  onChange={(e) => setSelectedOracleId(e.target.value)}
+                  className="mt-1 w-full rounded border border-gray-800 bg-gray-950 px-2 py-1.5 text-xs focus:border-blue-600 focus:outline-none"
+                  disabled={eligibleOracles.length === 0}
+                >
+                  {eligibleOracles.length === 0 && (
+                    <option value="">
+                      {oraclesLoading
+                        ? 'Loading eligible BTC oracles…'
+                        : oraclesError
+                          ? '❌ Failed to load — see message below'
+                          : 'No eligible oracle (try refresh)'}
+                    </option>
+                  )}
+                  {eligibleOracles.map((o, i) => {
+                    const mins = Math.max(0, Math.floor((Number(o.expiry) - nowMs) / 60000))
+                    return (
+                      <option key={o.id} value={o.id}>
+                        {i === 0 ? '★ ' : ''}
+                        {o.id.slice(0, 10)}… exp {mins}m · spot ${(Number(o.spot) / 1e9).toFixed(2)}
+                      </option>
+                    )
+                  })}
+                </select>
+                {oraclesError && (
+                  <p className="mt-1 text-[10px] text-red-400 leading-tight">
+                    {oraclesError}
+                  </p>
+                )}
+              </div>
+
+              <div className="flex gap-2">
+                <button
+                  onClick={handleGenerateDeck}
+                  disabled={loading || eligibleOracles.length === 0}
+                  className="flex-1 rounded bg-blue-700 px-3 py-2 text-xs font-medium text-white hover:bg-blue-600 disabled:opacity-50 transition"
+                >
+                  🎲 Generate Deck Hash
+                </button>
+                <button
+                  onClick={handleCreateDuel}
+                  disabled={loading || generatedHash.length === 0}
+                  className="flex-1 rounded bg-green-700 px-3 py-2 text-xs font-medium text-white hover:bg-green-600 disabled:opacity-50 transition"
+                >
+                  ⚔️ Create Duel
+                </button>
+              </div>
+            </div>
+
+            <div className="flex flex-col justify-end">
+              <div className="rounded bg-gray-950 p-3 text-xs text-gray-400 border border-gray-850 h-[110px] overflow-y-auto mb-2">
+                {generatedHash.length > 0 ? (
+                  <div>
+                    <span className="text-green-400 font-semibold">Deck ready! ({generatedCards.length} cards)</span>
+                    <span className="block truncate mt-1">Hash: {toHex(generatedHash)}</span>
+                    <span className="block mt-0.5 text-[10px]">
+                      Strikes: {generatedCards.map((c) => (Number(c.strike) / 1e9).toFixed(2)).join(', ')}
+                    </span>
+                  </div>
+                ) : (
+                  <span>
+                    Pick deck size + starting oracle (defaults to nearest expiry ★), then click
+                    "Generate Deck Hash" to build N cards. Each card uses the i-th nearest oracle
+                    (wraps if N &gt; available). Strike = each oracle's ATM spot.{' '}
+                    <span className="text-yellow-500">Tip:</span> avoid picking an oracle expiring
+                    in &lt;30m — once it expires, that card can no longer be swiped.
+                  </span>
+                )}
+              </div>
+              <button
+                onClick={handleJoinDuel}
+                disabled={loading || !duelId}
+                className="w-full rounded bg-gray-800 px-3 py-2 text-xs font-medium text-gray-100 hover:bg-gray-700 disabled:opacity-50 border border-gray-700 transition"
+              >
+                🤝 Join Existing Duel
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {/* Step 2: Reveal Deck */}
+        <div className="rounded-lg border border-gray-800 bg-gray-900/30 p-4 space-y-3">
+          <div className="flex items-center gap-2 border-b border-gray-800 pb-2">
+            <span className="flex h-5 w-5 items-center justify-center rounded-full bg-blue-600 text-xs font-bold text-white">2</span>
+            <h4 className="text-sm font-semibold text-gray-200">Reveal Deck (Active State)</h4>
+          </div>
+          <p className="text-xs text-gray-400">
+            Once both players have joined, the duel status becomes <span className="text-blue-400 font-semibold">ACTIVE</span>. The creator must reveal the card coordinates matching the deck hash submitted in Step 1.
+          </p>
+          <button
+            onClick={handleRevealDeck}
+            disabled={loading || !duelId || (duelDetails && duelDetails.status !== 2) || (duelDetails && duelDetails.cards && duelDetails.cards.length > 0)}
+            className="w-full rounded bg-indigo-700 px-3 py-2 text-xs font-medium text-white hover:bg-indigo-600 disabled:opacity-50 transition"
+          >
+            🔓 Reveal Generated Deck to On-chain Duel
+          </button>
+        </div>
+
+        {/* Step 3: Gameplay (Swipes) */}
+        <div className="rounded-lg border border-gray-800 bg-gray-900/30 p-4 space-y-3">
+          <div className="flex items-center gap-2 border-b border-gray-800 pb-2">
+            <span className="flex h-5 w-5 items-center justify-center rounded-full bg-blue-600 text-xs font-bold text-white">3</span>
+            <h4 className="text-sm font-semibold text-gray-200">Submit Player Swipes</h4>
+          </div>
+          <p className="text-xs text-gray-400">
+            Submit a prediction for a card. The active wallet context acts as the player. You must own a PredictManager holding enough contracts.
+          </p>
+
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            {(() => {
+              // Card count comes from the on-chain duel when loaded, falling
+              // back to the locally-generated deck (pre-create state) or the
+              // default if neither is available.
+              const cardCount = (
+                Number(duelDetails?.deck_size) ||
+                duelDetails?.cards?.length ||
+                generatedCards.length ||
+                deckSize
+              )
+              const safeCount = Math.max(1, Math.min(20, cardCount))
+              return (
+                <div>
+                  <label className="block text-[10px] font-medium text-gray-400">
+                    Card Index (0–{safeCount - 1})
+                  </label>
+                  <select
+                    value={Math.min(swipeCardIdx, safeCount - 1)}
+                    onChange={(e) => setSwipeCardIdx(Number(e.target.value))}
+                    className="mt-1 w-full rounded border border-gray-800 bg-gray-950 px-2 py-1 text-xs focus:border-blue-600 focus:outline-none"
+                  >
+                    {Array.from({ length: safeCount }, (_, i) => (
+                      <option key={i} value={i}>Card {i}</option>
+                    ))}
+                  </select>
+                </div>
+              )
+            })()}
+
+            <div>
+              <label className="block text-[10px] font-medium text-gray-400">Prediction</label>
+              <select
+                value={swipeIsUp ? 'up' : 'down'}
+                onChange={(e) => setSwipeIsUp(e.target.value === 'up')}
+                className="mt-1 w-full rounded border border-gray-800 bg-gray-950 px-2 py-1 text-xs focus:border-blue-600 focus:outline-none"
+              >
+                <option value="up">🟢 UP</option>
+                <option value="down">🔴 DOWN</option>
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-[10px] font-medium text-gray-400">Quantity (Contracts)</label>
+              <input
+                type="number"
+                value={swipeQty}
+                onChange={(e) => setSwipeQty(e.target.value)}
+                className="mt-1 w-full rounded border border-gray-800 bg-gray-950 px-2 py-1 text-xs focus:border-blue-600 focus:outline-none"
+              />
+            </div>
+
+            <div>
+              <label className="block text-[10px] font-medium text-gray-400">Premium Cost (dUSDC)</label>
+              <input
+                type="text"
+                value="Auto-Calculated"
+                disabled
+                className="mt-1 w-full rounded border border-gray-800 bg-gray-900 px-2 py-1 text-xs text-gray-400 cursor-not-allowed font-medium focus:outline-none"
+              />
+            </div>
+          </div>
+
+          {(() => {
+            const card = duelDetails?.cards?.[swipeCardIdx]
+            const cardOracleId = card?.fields?.oracle_id as string | undefined
+            const cardOracleInfo = cardOracleId ? oraclesInfo[cardOracleId] : null
+            const cardOracleStatus = cardOracleInfo?.status as string | undefined
+            const oracleLive = cardOracleStatus === 'Active'
+            const oracleBlock = !!cardOracleId && cardOracleStatus && !oracleLive
+            return (
+              <>
+                <button
+                  onClick={handleRecordSwipe}
+                  disabled={
+                    loading ||
+                    !duelId ||
+                    !managerId ||
+                    (duelDetails && duelDetails.status !== 2) ||
+                    oracleBlock
+                  }
+                  className="w-full rounded bg-cyan-700 px-3 py-2 text-xs font-medium text-white hover:bg-cyan-600 disabled:opacity-50 transition"
+                  title={oracleBlock ? `Card ${swipeCardIdx}'s oracle is ${cardOracleStatus} — predict::mint will abort.` : ''}
+                >
+                  ✍️ Record Swipe
+                </button>
+                {oracleBlock && (
+                  <p className="mt-2 text-[10px] text-yellow-500/80 leading-tight">
+                    ⚠️ Card {swipeCardIdx}'s oracle ({cardOracleId?.slice(0, 10)}…) is{' '}
+                    <span className="font-bold">{cardOracleStatus}</span>. The mint will abort with{' '}
+                    <code>assert_live_oracle</code> (DeepBook code 4). Either pick a different card
+                    or use refund / test-finalize to unwind the duel.
+                  </p>
+                )}
+              </>
+            )
+          })()}
+        </div>
+
+        {/* Step 4: Finalize */}
+        <div className="rounded-lg border border-gray-800 bg-gray-900/30 p-4 space-y-3">
+          <div className="flex items-center gap-2 border-b border-gray-800 pb-2">
+            <span className="flex h-5 w-5 items-center justify-center rounded-full bg-blue-600 text-xs font-bold text-white">4</span>
+            <h4 className="text-sm font-semibold text-gray-200">Finalize</h4>
+          </div>
+          {(() => {
+            const oracleIds = (duelDetails?.cards as any[] | undefined)
+              ?.map((c: any) => c?.fields?.oracle_id as string | undefined)
+              .filter((o): o is string => !!o) ?? []
+            const N = oracleIds.length || Number(duelDetails?.deck_size) || generatedCards.length || deckSize
+            const uniqueOracles = new Set(oracleIds).size
+            const multiOracle = uniqueOracles > 1
+            const settled = oracleIds.filter((oid) => oraclesInfo[oid]?.status === 'Settled')
+            const withSpot = oracleIds.filter((oid) => {
+              const sp = oraclesInfo[oid]?.spotPrice
+              return sp && Number(sp) > 0
+            })
+            const has = settled.length > 0 || withSpot.length > 0
+            const mode = settled.length > 0
+              ? `${settled.length}/${N} settled`
+              : withSpot.length > 0
+                ? `spot (${withSpot.length}/${N} priced)`
+                : 'waiting'
+            return (
+              <>
+                <p className="text-xs text-gray-400">
+                  One-shot finalize: reads <code className="text-gray-300">oracle.settlement_price</code>,
+                  scores all {N} card{N === 1 ? '' : 's'} inline, distributes the stake based on PnL.
+                  The <code className="text-gray-300">DuelFinalized</code> event carries the oracle id +
+                  settlement_price as on-chain proof.
+                </p>
+                <div className="flex items-end gap-2 w-full pt-1">
+                  <button
+                    onClick={handleFinalizeDuel}
+                    disabled={loading || !duelId || (duelDetails && duelDetails.status !== 2) || multiOracle}
+                    className="flex-1 rounded bg-purple-700 px-3 py-2 text-xs font-medium text-white hover:bg-purple-600 disabled:opacity-50 transition"
+                    title={multiOracle
+                      ? `Deck has ${uniqueOracles} different oracles. Use ⚗️ test finalize.`
+                      : `Reads the deck's single oracle settlement_price, scores all ${N} cards, pays the winner.`}
+                  >
+                    🏆 Finalize
+                  </button>
+                  <button
+                    onClick={handleRefundDuel}
+                    disabled={loading || !duelId || (duelDetails && duelDetails.status === 3)}
+                    className="flex-1 rounded bg-red-850 px-3 py-2 text-xs font-medium text-white hover:bg-red-800 disabled:opacity-50 transition border border-red-700"
+                  >
+                    💸 Refund / Cancel Duel
+                  </button>
+                </div>
+                {multiOracle && (
+                  <p className="mt-2 text-[10px] text-yellow-500/80 leading-tight">
+                    Deck has {uniqueOracles} different oracles. Production <code>finalize</code> requires
+                    all {N} cards to share one oracle; use ⚗️ test finalize below to finalize with one
+                    oracle's price applied to every card.
+                  </p>
+                )}
+
+                {/* TEST/DEV — finalize against any oracle with a usable price. */}
+                <div className="mt-3 pt-3 border-t border-dashed border-yellow-900/50 space-y-2">
+                  <p className="text-[10px] text-yellow-500/80 leading-relaxed">
+                    <span className="font-bold">⚗️ Test mode:</span>{' '}
+                    finalize using a single oracle from the deck — prefers a settled oracle but
+                    falls back to the current spot price if none has settled. Applies that price
+                    to all {N} card{N === 1 ? '' : 's'} regardless of each card's actual oracle.
+                    Skips anti-replay. <em>Use only on testnet</em>.
+                  </p>
+                  <button
+                    onClick={handleFinalizeTestOneOracle}
+                    disabled={loading || !duelId || (duelDetails && duelDetails.status !== 2) || !has}
+                    className="w-full rounded bg-yellow-900/40 px-3 py-1.5 text-xs font-medium text-yellow-200 hover:bg-yellow-900/60 disabled:opacity-40 transition border border-yellow-900/60"
+                    title={has ? `Will use ${settled[0] || withSpot[0]}` : 'No oracle with usable price yet'}
+                  >
+                    ⚗️ Finalize (test — single oracle: {mode})
+                  </button>
+                </div>
+              </>
+            )
+          })()}
+        </div>
+      </div>
+    </div>
+  )
+}
