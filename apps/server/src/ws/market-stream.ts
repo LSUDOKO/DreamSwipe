@@ -276,6 +276,36 @@ async function spotTick(): Promise<void> {
   }
 }
 
+/**
+ * The current practice spot, in probability millionths.
+ *
+ * Shared with `spotTick` so the practice DECK and the practice TICK STREAM are
+ * built from the same series — otherwise a deck could be dealt at one price
+ * and then settled against a completely unrelated one.
+ *
+ * Reads the venue when a book exists and falls back to the synthetic walk when
+ * it does not. Practice is fully simulated, so it must not fail because
+ * DreamDEX happens to have no resting orders — which is the common case on
+ * testnet and is exactly what made `readBtcSpot()` throw SPOT_UNAVAILABLE and
+ * take the whole practice mode down.
+ */
+export async function currentPracticeSpot(): Promise<bigint> {
+  try {
+    const markets = await getAdapter().listMarkets({ limit: 6 })
+    const target = markets.find((m) => m.asset === "BTC") ?? markets[0]
+    if (target) {
+      const book = await getAdapter().getOrderBook(target.id)
+      if (book.mid !== null && book.mid > 0n) {
+        lastSpot = book.mid
+        return book.mid
+      }
+    }
+  } catch {
+    // Fall through to the synthetic series.
+  }
+  return nextSyntheticSpot()
+}
+
 export function startSpotStream(): void {
   if (spotTimer) return
   spotTimer = setInterval(() => {

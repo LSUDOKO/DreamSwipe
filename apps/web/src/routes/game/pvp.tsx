@@ -61,8 +61,10 @@ function GamePvpInner() {
   const [modeOpen, setModeOpen] = useState(false)
   const [onboardingOpen, setOnboardingOpen] = useState(false)
   const [managerId, setManagerId] = useState<string | null>(null)
+  /** Inline status for queue attempts — replaces blocking alert()s. */
+  const [notice, setNotice] = useState<string | null>(null)
 
-  const { wsOpen, send, onMessage } = useFlickySocket(account?.address)
+  const { wsOpen, wsSlow, send, onMessage } = useFlickySocket(account?.address)
 
   const [queueSize, setQueueSize] = useState<number | null>(null)
   const [matched, setMatched] = useState<{
@@ -99,13 +101,21 @@ function GamePvpInner() {
 
   const onQueueMatch = () => {
     if (!account) {
-      alert("Please sign in first")
+      // A blocking alert() used to fire here. It stops the render loop, so the
+      // socket could not finish connecting while it was up — the user dismissed
+      // it, clicked again, and got the same alert. Inline status instead.
+      setNotice("Sign in first — connect a wallet to queue for a duel.")
       return
     }
     if (!wsOpen) {
-      alert("Connecting to server... Please wait.")
+      setNotice(
+        wsSlow
+          ? "Waking the server — the API sleeps when idle and takes up to 30 seconds. It will connect on its own; no need to reload."
+          : "Connecting to the server…"
+      )
       return
     }
+    setNotice(null)
     if (queueSize !== null) {
       send({ type: "queue_leave" })
       // Snap UI back immediately — don't wait for the server's queue_left
@@ -159,6 +169,11 @@ function GamePvpInner() {
   return (
     <>
       <WsErrorBanner onMessage={onMessage} />
+      {notice && (
+        <div className="mx-auto mt-3 max-w-sm rounded-xl border border-amber-300/25 bg-amber-300/[0.07] px-4 py-3 text-center font-pixel text-[10px] leading-relaxed tracking-[0.1em] text-amber-100/85">
+          {notice}
+        </div>
+      )}
       {content}
       <ModeModal open={modeOpen} onClose={() => setModeOpen(false)} />
       <OnboardingModal

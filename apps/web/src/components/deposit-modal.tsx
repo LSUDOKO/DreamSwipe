@@ -14,10 +14,14 @@
  * SomniaHacks faucet is a Telegram flow, not a contract — offering a "get
  * tokens" button that silently did nothing would be worse than a link.
  */
-import { useEffect } from "react"
+import { useCallback, useEffect, useState } from "react"
 import { createPortal } from "react-dom"
+import { useConfig } from "wagmi"
+import { waitForTransactionReceipt } from "wagmi/actions"
 import { PixelButton } from "@/components/pixel-button"
 import { useWalletBalances } from "@/hooks/use-wallet-balances"
+import { claimFaucet } from "@/lib/duel"
+import { FAUCET_AMOUNT } from "@/lib/chain"
 import {
   COLLATERAL_SYMBOL,
   addressUrl,
@@ -34,8 +38,50 @@ export interface DepositModalProps {
   onClose: () => void
 }
 
+type ClaimState =
+  | { kind: "idle" }
+  | { kind: "claiming" }
+  | { kind: "done" }
+  | { kind: "error"; message: string }
+
 export function DepositModal({ open, address, onClose }: DepositModalProps) {
   const { balanceBase, decimals, gas, isLoading, refetch } = useWalletBalances()
+  const config = useConfig()
+  const [claim, setClaim] = useState<ClaimState>({ kind: "idle" })
+
+  /**
+   * Claim tUSDC from the token's own permissionless faucet.
+   *
+   * This replaced a link to a Telegram group. Collateral is one click away on
+   * chain, so sending a player out of the app mid-onboarding to ask a human
+   * for a token they can mint themselves was a dead end.
+   *
+   * Gas still comes from the faucet group — the token mints collateral, not
+   * STT — so the button is disabled without gas rather than failing at the
+   * wallet prompt.
+   */
+  const onClaim = useCallback(async () => {
+    setClaim({ kind: "claiming" })
+    try {
+      const hash = await claimFaucet(config, FAUCET_AMOUNT)
+      // Wait for the receipt: "submitted" is not "succeeded" on Somnia, where
+      // an under-limit tx mines with status 0.
+      const receipt = await waitForTransactionReceipt(config, { hash })
+      if (receipt.status !== "success") {
+        throw new Error("The faucet transaction reverted. Try again.")
+      }
+      await refetch()
+      setClaim({ kind: "done" })
+    } catch (e) {
+      const raw = e instanceof Error ? e.message : String(e)
+      setClaim({
+        kind: "error",
+        message: /user rejected|denied/i.test(raw)
+          ? "Claim cancelled — approve the transaction in your wallet."
+          : raw.split("\n")[0]?.slice(0, 140) || "Faucet claim failed.",
+      })
+    }
+  }, [config, refetch])
 
   useEffect(() => {
     if (!open) return
@@ -131,20 +177,46 @@ export function DepositModal({ open, address, onClose }: DepositModalProps) {
             </div>
           )}
 
+          {/* Collateral: claimable in-app, one transaction. */}
           <PixelButton
-            onClick={() => window.open(FAUCET_URL, "_blank", "noopener")}
+            onClick={() => void onClaim()}
+            disabled={claim.kind === "claiming" || needsGas}
             className="h-12 w-full"
           >
-            open testnet faucet
+            {claim.kind === "claiming"
+              ? "claiming…"
+              : `get ${FAUCET_AMOUNT / 1_000_000n} ${COLLATERAL_SYMBOL}`}
           </PixelButton>
+
+          {claim.kind === "done" && (
+            <p className="text-center text-[10px] tracking-[0.14em] text-emerald-300/90 uppercase">
+              claimed — balance updated
+            </p>
+          )}
+          {claim.kind === "error" && (
+            <p className="text-center text-[10px] leading-relaxed tracking-[0.1em] text-red-300/85">
+              {claim.message}
+            </p>
+          )}
+
+          {/* Gas cannot be minted — it still comes from the faucet group. */}
+          {needsGas && (
+            <PixelButton
+              onClick={() => window.open(FAUCET_URL, "_blank", "noopener")}
+              className="h-11 w-full"
+            >
+              get STT for gas
+            </PixelButton>
+          )}
 
           <PixelButton onClick={() => refetch()} className="h-10 w-full">
             refresh balances
           </PixelButton>
 
           <p className="mt-1 text-center text-[10px] leading-relaxed tracking-[0.14em] text-white/35">
-            somnia shannon testnet. faucet is the somniahacks telegram group —
-            ask in the faucet topic for STT and {COLLATERAL_SYMBOL}.
+            {needsGas
+              ? "STT for gas comes from the SomniaHacks group; collateral is claimable here once you have gas."
+              : `${COLLATERAL_SYMBOL} is claimable straight from the token contract — no external step.`}
           </p>
         </div>
       </div>

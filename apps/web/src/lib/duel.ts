@@ -20,7 +20,14 @@ import type { Config } from "wagmi"
 import { readContract, signTypedData, writeContract } from "wagmi/actions"
 import { erc20Abi, type Address, type Hex } from "viem"
 import { duelAbi } from "./duel-abi"
-import { COLLATERAL_ADDRESS, DUEL_ADDRESS, somniaTestnet } from "./chain"
+import {
+  COLLATERAL_ADDRESS,
+  DUEL_ADDRESS,
+  FAUCET_AMOUNT,
+  FAUCET_MAX,
+  faucetAbi,
+  somniaTestnet,
+} from "./chain"
 
 /**
  * Mirrors the contract's `Status` enum.
@@ -424,4 +431,32 @@ export function duelWinner(duel: DuelState): Address | null {
   if (duel.p0Score > duel.p1Score) return duel.creator
   if (duel.p1Score > duel.p0Score) return duel.challenger
   return null
+}
+
+/**
+ * Claim testnet collateral from the token's own faucet.
+ *
+ * Permissionless and capped at 10,000 tUSDC per call. Gas is paid by the
+ * player in STT, so this still requires a funded wallet — the faucet mints
+ * collateral, not gas.
+ */
+export async function claimFaucet(
+  config: Config,
+  amount: bigint = FAUCET_AMOUNT
+): Promise<Hex> {
+  if (amount > FAUCET_MAX) {
+    throw new Error(
+      `The faucet caps each claim at ${FAUCET_MAX / 1_000_000n} tUSDC.`
+    )
+  }
+  return writeContract(config, {
+    address: COLLATERAL_ADDRESS,
+    abi: faucetAbi,
+    functionName: "faucet",
+    args: [amount],
+    // Somnia's gas estimate is unreliable in both directions here: a 500k
+    // limit mined status 0 and burned the whole limit while the call actually
+    // used ~253k. Over-provision; unused gas is refunded.
+    gas: 5_000_000n,
+  })
 }

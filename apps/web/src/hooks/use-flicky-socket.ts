@@ -64,6 +64,25 @@ export function useFlickySocket(
     addressRef.current = address
   }, [address])
   const [wsOpen, setWsOpen] = useState(false)
+  /**
+   * True once the socket has been trying for a while without opening.
+   *
+   * The API runs on a free tier that SLEEPS when idle, so the first connection
+   * after a nap takes ~30s while the host boots. A bare "connecting…" during
+   * that window reads as a hang, and people reload — which starts the wait
+   * over. This lets the UI say what is actually happening.
+   */
+  const [wsSlow, setWsSlow] = useState(false)
+
+  useEffect(() => {
+    if (wsOpen) {
+      setWsSlow(false)
+      return
+    }
+    // 4s is past a healthy connect but well inside a cold start.
+    const t = setTimeout(() => setWsSlow(true), 4_000)
+    return () => clearTimeout(t)
+  }, [wsOpen])
 
   // Connect once on mount (while enabled). The socket is intentionally
   // NOT gated on `address`: the read streams (oracle ticks, room_state)
@@ -191,5 +210,5 @@ export function useFlickySocket(
     []
   )
 
-  return { wsOpen, send, onMessage }
+  return { wsOpen, wsSlow, send, onMessage }
 }

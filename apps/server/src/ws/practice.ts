@@ -15,14 +15,10 @@
  * stream, and the result. Nothing touches the chain or the DB.
  */
 import type { ServerWebSocket } from "bun"
-import {
-  buildPracticeDeck,
-  deriveSeed,
-  hashToHex,
-  readBtcSpot,
-} from "../deckmaster"
+import { buildPracticeDeck, deriveSeed, hashToHex } from "../deckmaster"
 import { makeLogger, shortId } from "../log"
 import type { SocketState } from "./matchmaking"
+import { currentPracticeSpot } from "./market-stream"
 import { _sendInternal } from "./matchmaking"
 
 const log = makeLogger("practice")
@@ -39,7 +35,11 @@ export async function handlePracticeStart(
     return
   }
   try {
-    const spot = await readBtcSpot()
+    // Same source the practice tick stream uses, so the deck and the ticks it
+    // settles against are one series. `readBtcSpot()` is NOT used: it throws
+    // SPOT_UNAVAILABLE by design (live DreamDEX decks carry their own strike
+    // and need no spot), which crashed practice with a developer-facing error.
+    const spot = await currentPracticeSpot()
     const nonceHex = hashToHex(crypto.getRandomValues(new Uint8Array(16)))
     const seed = deriveSeed({
       sender: ws.data.address,

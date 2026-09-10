@@ -38,7 +38,7 @@ export default function GamePractice() {
 function GamePracticeInner() {
   const account = useCurrentAccount()
   const navigate = useNavigate()
-  const { wsOpen, send, onMessage } = useFlickySocket(account?.address)
+  const { wsOpen, wsSlow, send, onMessage } = useFlickySocket(account?.address)
   const practice = usePracticeSession({
     address: account?.address,
     send,
@@ -70,6 +70,7 @@ function GamePracticeInner() {
       {phase.kind === "INTRO" && (
         <IntroView
           canStart={wsOpen && !!account?.address}
+          wsSlow={wsSlow}
           youAddress={account?.address}
           onStart={practice.start}
         />
@@ -187,10 +188,13 @@ function MatchBar({
 
 function IntroView({
   canStart,
+  wsSlow,
   youAddress,
   onStart,
 }: {
   canStart: boolean
+  /** Socket has been connecting a while — likely a free-tier cold start. */
+  wsSlow: boolean
   youAddress: string | undefined
   onStart: () => void
 }) {
@@ -220,6 +224,14 @@ function IntroView({
       >
         {canStart ? "start practice" : "connecting…"}
       </button>
+      {/* The API sleeps on a free tier; a first connect after a nap takes
+          ~30s. Saying so stops people reloading and restarting the wait. */}
+      {!canStart && wsSlow && (
+        <p className="mt-3 max-w-xs text-center text-[10px] leading-relaxed tracking-[0.1em] text-white/45">
+          Waking the server — the API sleeps when idle and takes up to 30
+          seconds to start. This will connect on its own; no need to reload.
+        </p>
+      )}
     </div>
   )
 }

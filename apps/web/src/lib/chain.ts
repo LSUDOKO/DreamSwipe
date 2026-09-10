@@ -177,3 +177,31 @@ export function sameAddress(
  * 0x0000…0000.
  */
 export const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000"
+
+/**
+ * Maximum tUSDC per faucet call, in base units (10,000 at 6 decimals).
+ *
+ * Verified against the deployed token: 10,000 succeeds, 10,000 + 1 reverts.
+ */
+export const FAUCET_MAX = 10_000_000_000n
+
+/** What the in-app faucet claims per press. */
+export const FAUCET_AMOUNT = 1_000_000_000n // 1,000 tUSDC — plenty for testing
+
+/**
+ * Minimal ABI for the testnet collateral's public faucet.
+ *
+ * The token exposes a PERMISSIONLESS `faucet(uint256)` — verified callable
+ * from an arbitrary address — so players can fund themselves in-app. Sending
+ * them to a Telegram group for a token they can mint with one click was a
+ * needless dead end in the middle of onboarding.
+ */
+export const faucetAbi = [
+  {
+    type: "function",
+    name: "faucet",
+    stateMutability: "nonpayable",
+    inputs: [{ name: "amount", type: "uint256" }],
+    outputs: [],
+  },
+] as const
