@@ -39,8 +39,22 @@ function GamePracticeInner() {
   const account = useCurrentAccount()
   const navigate = useNavigate()
   const { wsOpen, wsSlow, send, onMessage } = useFlickySocket(account?.address)
+  /**
+   * The player's identity for THIS practice session.
+   *
+   * Practice is fully simulated and needs no wallet, so an anonymous player
+   * gets a stable placeholder address. Without one, every avatar and
+   * self-vs-opponent comparison below would crash on `account.address` — which
+   * is why practice was gated behind sign-in in the first place, defeating the
+   * one mode built for people who have not connected yet.
+   *
+   * Fixed (not random) so a re-render does not change the player's own avatar
+   * mid-match.
+   */
+  const youAddress =
+    account?.address ?? "0xA11CE0A11CE0A11CE0A11CE0A11CE0A11CE0A11C"
   const practice = usePracticeSession({
-    address: account?.address,
+    address: youAddress,
     send,
     onMessage,
     wsOpen,
@@ -60,7 +74,7 @@ function GamePracticeInner() {
             <ChartChips
               roomState={practice.roomState}
               ticks={practice.ticks}
-              myAddress={account.address}
+              myAddress={youAddress}
               opponentAddress={BOT_ADDRESS}
             />
           ) : null
@@ -69,9 +83,9 @@ function GamePracticeInner() {
 
       {phase.kind === "INTRO" && (
         <IntroView
-          canStart={wsOpen && !!account?.address}
+          canStart={wsOpen}
           wsSlow={wsSlow}
-          youAddress={account?.address}
+          youAddress={youAddress}
           onStart={practice.start}
         />
       )}
@@ -98,7 +112,7 @@ function GamePracticeInner() {
           ticks={practice.ticks}
           lockupStartMs={phase.lockupStartMs}
           lockupEndMs={phase.lockupEndMs}
-          youAddress={account.address}
+          youAddress={youAddress}
         />
       )}
       {phase.kind === "RESULT" && practice.roomState && practice.result && (

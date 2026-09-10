@@ -26,14 +26,12 @@ const log = makeLogger("practice")
 export async function handlePracticeStart(
   ws: ServerWebSocket<SocketState>
 ): Promise<void> {
-  if (!ws.data.address) {
-    _sendInternal(ws, {
-      type: "error",
-      code: "no_address",
-      message: "send `hello` with your address first",
-    })
-    return
-  }
+  // Practice is FULLY SIMULATED — no stake, no chain write, no wallet needed.
+  // It used to require an address, which meant the one mode built for people
+  // who have not connected yet was the one mode they could not open. Anonymous
+  // sockets get a session seeded from their socket identity instead.
+  const sender =
+    ws.data.address ?? `anon-${Math.random().toString(36).slice(2, 10)}`
   try {
     // Same source the practice tick stream uses, so the deck and the ticks it
     // settles against are one series. `readBtcSpot()` is NOT used: it throws
@@ -42,7 +40,7 @@ export async function handlePracticeStart(
     const spot = await currentPracticeSpot()
     const nonceHex = hashToHex(crypto.getRandomValues(new Uint8Array(16)))
     const seed = deriveSeed({
-      sender: ws.data.address,
+      sender,
       asset: "BTC",
       timestampMs: Date.now(),
       nonceHex,
@@ -50,7 +48,7 @@ export async function handlePracticeStart(
     const cards = buildPracticeDeck(spot, seed)
     const botSwipes = cards.map(() => Math.random() > 0.5)
     log.info(
-      `practice for ${shortId(ws.data.address)} — ${cards.length} synthetic cards @ spot ${spot}`
+      `practice for ${shortId(sender)} — ${cards.length} synthetic cards @ spot ${spot}`
     )
     _sendInternal(ws, {
       type: "practice_session",
@@ -63,7 +61,7 @@ export async function handlePracticeStart(
     })
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e)
-    log.warn(`practice failed for ${shortId(ws.data.address)}: ${msg}`)
+    log.warn(`practice failed for ${shortId(sender)}: ${msg}`)
     _sendInternal(ws, {
       type: "error",
       code: "practice_failed",
