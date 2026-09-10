@@ -145,3 +145,56 @@ export async function handleBotArenaRequest(
     return json({ error: "internal" }, 500)
   }
 }
+
+/**
+ * `GET /bot-arena/settlement?marketIds=0x..,0x..` — how those markets resolved.
+ *
+ * ── Why this is a SEPARATE endpoint from the deck ───────────────────────────
+ *
+ * The deck endpoint deliberately returns no outcome data, because a bot reads
+ * the same payload a human does and must not be able to see the future
+ * (`specs/07_BOT_ARENA.md`). Settlement lives here instead, so the fairness
+ * boundary stays a property of the deck payload rather than a promise about
+ * how the client uses it: a card can only be scored AFTER it was swiped, and
+ * the agent never receives this data at all.
+ *
+ * Returns `resolved: false` for a market still open. That is the honest answer
+ * — a duel is scored when the venue settles, not when the player finishes.
+ */
+export async function handleBotArenaSettlement(
+  req: Request
+): Promise<Response | null> {
+  const url = new URL(req.url)
+  if (url.pathname !== "/bot-arena/settlement") return null
+  if (req.method !== "GET") return json({ error: "method_not_allowed" }, 405)
+
+  const raw = url.searchParams.get("marketIds") ?? ""
+  const ids = raw
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .slice(0, 10)
+  if (ids.length === 0) return json({ error: "marketIds required" }, 400)
+
+  const ex = getAdapter()
+  const results = await Promise.all(
+    ids.map(async (marketId) => {
+      try {
+        const s = await ex.getSettlement(marketId)
+        if (!s) return { marketId, resolved: false }
+        return {
+          marketId,
+          resolved: true,
+          // null winner + voided:true means the venue voided the market and
+          // BOTH sides redeem at half — never coerced to a side.
+          winner: s.winner,
+          voided: s.voided,
+        }
+      } catch {
+        // An unreadable market is reported as unresolved rather than guessed.
+        return { marketId, resolved: false }
+      }
+    })
+  )
+  return json({ markets: results })
+}

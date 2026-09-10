@@ -20,7 +20,10 @@
  *     chat prune                trims the chat backlog
  */
 import { env } from "./env"
-import { handleBotArenaRequest } from "./bot-arena-api"
+import {
+  handleBotArenaRequest,
+  handleBotArenaSettlement,
+} from "./bot-arena-api"
 import { handleRelayRequest } from "./relay-api"
 import { createSomniaKeeper, trackedDuels } from "./somnia-keeper"
 import { createSomniaIndexer } from "./somnia-indexer"
@@ -112,6 +115,9 @@ const server = Bun.serve({
 
     const botArena = await handleBotArenaRequest(req)
     if (botArena) return botArena
+
+    const settlement = await handleBotArenaSettlement(req)
+    if (settlement) return settlement
 
     const relayed = await handleRelayRequest(req)
     if (relayed) return relayed
