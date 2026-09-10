@@ -16,26 +16,17 @@
  * the actual fill replaces the quote — the contract already stores whatever it
  * is told, so nothing downstream changes.
  */
-import { SomniaDreamDexAdapter } from "@workspace/dreamdex/adapter"
 import { ONE_PROBABILITY } from "@workspace/dreamdex"
 import { relaySwipe, validateSwipeRequest } from "./relayer"
 import { trackDuel } from "./somnia-keeper"
 import { makeLogger } from "./log"
+import { getVenueAdapter } from "./venue"
 
 const log = makeLogger("relay-api")
 
 /** One whole prediction contract, 6-decimal collateral. */
 const SWIPE_QUANTITY = 1_000_000n
 
-let adapter: SomniaDreamDexAdapter | null = null
-function getAdapter(): SomniaDreamDexAdapter {
-  adapter ??= new SomniaDreamDexAdapter({
-    rpcUrl: process.env.SOMNIA_RPC_URL,
-    wsRpcUrl: process.env.SOMNIA_WS_RPC_URL,
-    indexerUrl: process.env.DREAMDEX_INDEXER_URL,
-  })
-  return adapter
-}
 
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -61,7 +52,7 @@ async function priceSwipe(
   direction: number
 ): Promise<{ premium: bigint; filled: bigint }> {
   try {
-    const quote = await getAdapter().getQuote({
+    const quote = await getVenueAdapter().getQuote({
       marketId,
       direction: direction === 0 ? "UP" : "DOWN",
       quantity: SWIPE_QUANTITY,

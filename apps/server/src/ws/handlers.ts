@@ -6,8 +6,9 @@
 import type { WebSocketHandler } from "bun"
 import { makeLogger, shortId } from "../log"
 import { checkQueueBalanceGate } from "../balance-gate"
+import { MIN_DECK_SIZE, selectEligibleMarkets } from "../dreamdex-card-source"
+import { getVenueAdapter } from "../venue"
 import { STAKE_TIERS } from "./protocol"
-import { findDeckMarkets } from "../deckmaster"
 import { consume } from "../ratelimit"
 import { handleChatReact, handleChatSend, sendChatHistory } from "./chat"
 import {
@@ -131,49 +132,37 @@ export const websocketHandler: WebSocketHandler<SocketState> = {
           }
           return
         }
-        // Pre-flight the BTC market pool so players get a clear "try
-        // again in a few" instead of silently entering a queue that's
-        // going to fail at deck-gen. Deck-gen distributes multiple cards
-        // per market (round-robin + strike dedup — see buildDeck in
-        // deckmaster.ts) and, at match time, the mint probe
-        // (filterMintableMarkets) further narrows to currently-backed
-        // markets. A near-ATM deck from a single market is fine, so this
-        // gate only needs ONE headroom-eligible market; the real backing
-        // check happens at deck-gen. Fetch up to 5 for a fuller spread.
+        // Preflight the LIVE venue so a player learns there are no markets
+        // while still in the lobby, rather than after being paired with an
+        // opponent and failing at deck-gen.
+        //
+        // This used to call `findDeckMarkets()`, which reads the DeepBook
+        // Predict indexer — dead since the Somnia migration, so it ALWAYS
+        // returned zero and every quick match was rejected with "oracles not
+        // ready" no matter how many DreamDEX markets were actually live.
         try {
-          // Absorb a momentary market dip the way match-time deck-gen does:
-          // retry a few times before rejecting, so a 1-2s flicker in the thin
-          // 30min-3h band doesn't bounce the player out of the queue. (This is
-          // the loose headroom-only check; deck-gen at match time still runs
-          // its own stricter, mint-probed retry — see matchmaking.ts.)
-          const MIN_DECK_MARKETS = 1
-          const PREFLIGHT_ATTEMPTS = 3
-          const PREFLIGHT_RETRY_MS = 1_500
-          let available = 0
-          for (let attempt = 1; attempt <= PREFLIGHT_ATTEMPTS; attempt++) {
-            available = (await findDeckMarkets(5)).length
-            if (available >= MIN_DECK_MARKETS) break
-            if (attempt < PREFLIGHT_ATTEMPTS) {
-              await new Promise((r) => setTimeout(r, PREFLIGHT_RETRY_MS))
-            }
-          }
-          if (available < MIN_DECK_MARKETS) {
+          const markets = await getVenueAdapter().listMarkets({
+            tradingOnly: true,
+          })
+          const available = selectEligibleMarkets(markets, Date.now()).length
+          if (available < MIN_DECK_SIZE) {
             send(ws, {
               type: "error",
               code: "oracles_unavailable",
-              message: `No BTC markets live right now — try again in a couple of minutes.`,
-              detail: { available, required: MIN_DECK_MARKETS },
+              message: `Only ${available} live market${available === 1 ? "" : "s"} right now — a duel needs ${MIN_DECK_SIZE}. The venue rolls new windows every few minutes; try again shortly.`,
+              detail: { available, required: MIN_DECK_SIZE },
             })
             return
           }
         } catch (e) {
           log.warn(
-            `oracle preflight failed: ${e instanceof Error ? e.message : String(e)}`
+            `venue preflight failed: ${e instanceof Error ? e.message : String(e)}`
           )
           send(ws, {
             type: "error",
             code: "oracles_unavailable",
-            message: "couldn't check oracle availability; try again shortly",
+            message:
+              "Couldn't reach the venue to check for live markets — try again shortly.",
           })
           return
         }

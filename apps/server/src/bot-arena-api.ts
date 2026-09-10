@@ -19,23 +19,13 @@
  * from the future — see `specs/07_BOT_ARENA.md`. A client-side bot therefore
  * cannot cheat even if it wanted to, because the data never leaves the server.
  */
-import { SomniaDreamDexAdapter } from "@workspace/dreamdex/adapter"
 import { VenueUnavailableError } from "@workspace/dreamdex"
 import { buildDreamDexDeck } from "./dreamdex-card-source"
 import { makeLogger } from "./log"
+import { getVenueAdapter } from "./venue"
 
 const log = makeLogger("bot-arena")
 
-/** Shared adapter: reuses the single-flight market cache across requests. */
-let adapter: SomniaDreamDexAdapter | null = null
-function getAdapter(): SomniaDreamDexAdapter {
-  adapter ??= new SomniaDreamDexAdapter({
-    rpcUrl: process.env.SOMNIA_RPC_URL,
-    wsRpcUrl: process.env.SOMNIA_WS_RPC_URL,
-    indexerUrl: process.env.DREAMDEX_INDEXER_URL,
-  })
-  return adapter
-}
 
 /**
  * Rolling mid history per market, sampled as decks are served.
@@ -86,7 +76,7 @@ export async function handleBotArenaRequest(
   if (url.pathname !== "/bot-arena/deck") return null
   if (req.method !== "GET") return json({ error: "method_not_allowed" }, 405)
 
-  const ex = getAdapter()
+  const ex = getVenueAdapter()
 
   try {
     const deck = await buildDreamDexDeck({
@@ -176,7 +166,7 @@ export async function handleBotArenaSettlement(
     .slice(0, 10)
   if (ids.length === 0) return json({ error: "marketIds required" }, 400)
 
-  const ex = getAdapter()
+  const ex = getVenueAdapter()
   const results = await Promise.all(
     ids.map(async (marketId) => {
       try {

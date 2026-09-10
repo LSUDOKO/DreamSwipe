@@ -44,8 +44,8 @@ function describe(
       }
     case "oracles_unavailable":
       return {
-        title: "oracles not ready",
-        body: "the price feed is short a card — try again in a couple of minutes.",
+        title: "not enough live markets",
+        body: "the venue rolls new windows every few minutes — try again shortly.",
       }
     case "no_address":
       return {
