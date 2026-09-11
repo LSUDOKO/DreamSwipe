@@ -58,10 +58,40 @@ export default function Landing() {
   return (
     <div className="flex min-h-dvh w-full flex-col overflow-x-hidden bg-[#1b2548] font-pixel text-white">
       <TopBar />
+      <SeasonBanner />
       <Hero />
       <HowItWorks />
       <SiteFooter />
     </div>
+  )
+}
+
+/**
+ * Season 1 key art, full-bleed under the nav.
+ *
+ * `shrink-0` so it keeps its height while `Hero` (flex-1) absorbs the rest of
+ * the viewport — the same shape as HowItWorks and SiteFooter below.
+ *
+ * The art carries its own neon frame, so it is rendered raw: no border or
+ * bevel is added here, which would read as a second frame around the first.
+ * Height is clamped and the image cropped with object-cover rather than
+ * scaled, so a 2:1 banner cannot eat a phone screen — at 400px wide the
+ * natural height would otherwise be ~200px of the fold.
+ */
+function SeasonBanner() {
+  return (
+    <section
+      aria-hidden
+      className="relative shrink-0 overflow-hidden border-b-2 border-black bg-[#0b1020]"
+    >
+      <img
+        src="/assets/landing/season1.webp"
+        alt=""
+        className="h-28 w-full object-cover object-center sm:h-36 lg:h-48 2xl:h-64"
+      />
+      {/* Blend the art's flat navy edge into the hero below it. */}
+      <div className="pointer-events-none absolute inset-x-0 bottom-0 h-10 bg-gradient-to-b from-transparent to-[#1b2548]" />
+    </section>
   )
 }
 
