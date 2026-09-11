@@ -144,7 +144,7 @@ export default function Profile() {
               value={dusdcBalance.toFixed(2)}
             />
             <Stat
-              icon="/tokens/sui.png"
+              icon="/tokens/somnia.png"
               label="gas (stt)"
               value={managerBalance.toFixed(2)}
             />
@@ -154,7 +154,7 @@ export default function Profile() {
             <div className="flex items-center justify-between rounded-2xl bg-white/5 px-5 py-4">
               <div className="flex items-center gap-3">
                 <img
-                  src="/tokens/sui.png"
+                  src="/tokens/somnia.png"
                   alt=""
                   aria-hidden
                   className="size-10 [image-rendering:pixelated]"
@@ -255,7 +255,7 @@ function ProfileHeader({
             onClick={onAdd}
           />
           <BalanceChip
-            icon="/tokens/manager-usdc.png"
+            icon="/tokens/somnia.png"
             amount={managerDusdc.toFixed(2)}
             label="manager"
             onClick={onAdd}

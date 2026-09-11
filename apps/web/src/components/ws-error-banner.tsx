@@ -106,7 +106,7 @@ export function WsErrorBanner({
     >
       <div className="pointer-events-auto flex w-full animate-in items-start gap-3 rounded-md border-2 border-black/55 bg-[#3a1717] px-3 py-2.5 font-pixel shadow-[inset_0_-2px_0_rgba(0,0,0,0.35),inset_0_1px_0_rgba(255,255,255,0.08),0_4px_0_rgba(0,0,0,0.45)] duration-200 fade-in slide-in-from-top-2">
         <img
-          src="/icons/warn.png"
+          src="/icons/warning.png"
           alt=""
           aria-hidden
           onError={(e) => {

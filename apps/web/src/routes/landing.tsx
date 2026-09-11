@@ -155,10 +155,10 @@ function Hero() {
           </div>
           <div className="mt-9 flex flex-wrap gap-3 2xl:mt-12 2xl:gap-4">
             <Badge
-              icon="/assets/landing/deepbook.png"
+              icon="/assets/landing/dreamdex.png"
               label="Powered by DreamDEX Event Contracts"
             />
-            <Badge icon="/tokens/sui.png" label="Built on Somnia" />
+            <Badge icon="/tokens/somnia.png" label="Built on Somnia" />
           </div>
         </div>
 
@@ -202,7 +202,7 @@ function EnterGameButton({ onClick }: { onClick: () => void }) {
 function Badge({ icon, label }: { icon: string; label: string }) {
   return (
     <span className="flex items-center gap-2 border-2 border-black bg-[#0f1430] px-3 py-2 text-[11px] text-[#dfe4f2] shadow-[2px_2px_0_rgba(0,0,0,0.45)] sm:text-xs lg:gap-2.5 lg:px-4 lg:py-2.5 2xl:gap-3 2xl:px-5 2xl:py-3.5 2xl:text-lg">
-      {/* w-auto + object-contain: some badge icons (deepbook.png) are wide
+      {/* w-auto + object-contain: some badge icons (the DreamDEX wordmark) are wide
           marks, not square glyphs — a fixed square box would squash them. */}
       <AssetImage
         src={icon}

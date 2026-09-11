@@ -367,7 +367,7 @@ function FrameHeader({
                 other balance a player can genuinely be blocked by. */}
             <BalanceChip
               id="balance-gas"
-              icon="/tokens/sui.png"
+              icon="/tokens/somnia.png"
               amount={gasBalance.toFixed(3)}
               label="gas"
               onClick={onAddClick}
