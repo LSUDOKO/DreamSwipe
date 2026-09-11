@@ -35,13 +35,10 @@ export default function Profile() {
   // (and animates) instead of a bare history pop.
   const backTo =
     (location.state as { from?: string } | null)?.from ?? "/game/home"
-  const { data: suiBalance = 0 } = useSuiBalance()
-  const { data: dusdcBalance = 0 } = useDusdcBalance()
-  // There is no second funding account on EVM — the wallet holds collateral
-  // directly, so this row used to render the SAME number twice under a label
-  // for something that no longer exists. It now shows gas, which is the other
-  // balance a player can genuinely be blocked by.
-  const managerBalance = suiBalance
+  // `useSuiBalance` keeps its Sui-era name (see use-wallet-balances.ts) but
+  // returns native gas, which on Somnia is STT.
+  const { data: gasBalance = 0 } = useSuiBalance()
+  const { data: collateralBalance = 0 } = useDusdcBalance()
   const [depositOpen, setDepositOpen] = useState(false)
   const [withdrawOpen, setWithdrawOpen] = useState(false)
   const [avatarOpen, setAvatarOpen] = useState(false)
@@ -77,8 +74,8 @@ export default function Profile() {
             navigate(backTo)
           }}
           onAdd={() => setDepositOpen(true)}
-          dusdc={dusdcBalance}
-          managerDusdc={managerBalance}
+          collateral={collateralBalance}
+          gas={gasBalance}
         />
 
         <main className="route-swipe-from-right flex-1 overflow-y-auto px-4 pb-6">
@@ -140,31 +137,34 @@ export default function Profile() {
           <section className="grid grid-cols-2 gap-3 text-center">
             <Stat
               icon="/tokens/usdc-icon.png"
-              label="dusdc"
-              value={dusdcBalance.toFixed(2)}
+              label="tusdc"
+              value={collateralBalance.toFixed(2)}
             />
             <Stat
               icon="/tokens/somnia.png"
               label="gas (stt)"
-              value={managerBalance.toFixed(2)}
+              value={gasBalance.toFixed(2)}
             />
           </section>
 
+          {/* Collateral in full precision. This row used to be labelled "sui"
+              and render the GAS balance — so the screen showed the same number
+              twice and named it after a token this chain does not have. */}
           <section className="mt-3">
             <div className="flex items-center justify-between rounded-2xl bg-white/5 px-5 py-4">
               <div className="flex items-center gap-3">
                 <img
-                  src="/tokens/somnia.png"
+                  src="/tokens/usdc-icon.png"
                   alt=""
                   aria-hidden
                   className="size-10 [image-rendering:pixelated]"
                 />
                 <span className="text-lg tracking-[0.18em] text-white/55 uppercase">
-                  sui
+                  tusdc
                 </span>
               </div>
               <span className="text-3xl text-white tabular-nums">
-                {suiBalance.toFixed(4)}
+                {collateralBalance.toFixed(4)}
               </span>
             </div>
           </section>
@@ -221,13 +221,13 @@ export default function Profile() {
 function ProfileHeader({
   onBack,
   onAdd,
-  dusdc,
-  managerDusdc,
+  collateral,
+  gas,
 }: {
   onBack: () => void
   onAdd: () => void
-  dusdc: number
-  managerDusdc: number
+  collateral: number
+  gas: number
 }) {
   return (
     <header className="flex items-center justify-between gap-2 px-3 py-3">
@@ -250,14 +250,16 @@ function ProfileHeader({
         <div className="flex items-center gap-4">
           <BalanceChip
             icon="/tokens/usdc-icon.png"
-            amount={dusdc.toFixed(2)}
+            amount={collateral.toFixed(2)}
             label="wallet"
             onClick={onAdd}
           />
+          {/* Gas. Was labelled "manager" after the Sui DeepBook funding
+              account, which has no equivalent on EVM. */}
           <BalanceChip
             icon="/tokens/somnia.png"
-            amount={managerDusdc.toFixed(2)}
-            label="manager"
+            amount={gas.toFixed(2)}
+            label="gas"
             onClick={onAdd}
           />
         </div>

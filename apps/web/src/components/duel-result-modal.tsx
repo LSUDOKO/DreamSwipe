@@ -202,7 +202,7 @@ export function DuelResultModal({
             ) : (
               <>
                 <Stat value={summary.oddsLabel ?? "—"} label="odds" />
-                <Stat value={summary.netLabel ?? "—"} label="dusdc" />
+                <Stat value={summary.netLabel ?? "—"} label="tusdc" />
               </>
             )}
           </div>

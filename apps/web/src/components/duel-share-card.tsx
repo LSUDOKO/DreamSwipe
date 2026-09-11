@@ -91,7 +91,7 @@ export const DuelShareCard = forwardRef<
             label="hits"
           />
           <ShareStat value={summary.oddsLabel ?? "—"} label="odds" />
-          <ShareStat value={summary.netLabel ?? "—"} label="dusdc" />
+          <ShareStat value={summary.netLabel ?? "—"} label="tusdc" />
         </div>
       )}
       {summary.freeDuel && (

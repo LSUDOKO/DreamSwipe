@@ -33,10 +33,10 @@ import {
 import { type RoomState } from "@/lib/room-state"
 
 /**
- * Minimum AccountWrapper dUSDC balance to allow a swipe. Each swipe mints a
+ * Minimum wallet tUSDC balance to allow a swipe. Each swipe mints a
  * real position whose premium (`entry_probability × SWIPE_QUANTITY / leverage`
- * + fees) is withdrawn from the account; below this the mint aborts deep in
- * `account::withdraw_balance` with an opaque code. The favored side's win
+ * + fees) is taken from the wallet; below this the mint reverts. The favored
+ * side's win
  * probability is capped at ~0.65 (see deckmaster `ZONE_TARGET_PROB`), so its
  * premium ≲ 0.7 × quantity — gate on that plus a small headroom so we prompt a
  * top-up BEFORE the on-chain abort.
@@ -458,7 +458,7 @@ export function ActiveDuel({
         backingDropped
           ? "This market's liquidity backing dipped for a moment — swipe again (it usually clears within a few seconds)."
           : insufficient
-            ? "Your account ran out of dUSDC for this swipe's mint premium — top up your account and swipe again."
+            ? "Your wallet ran out of tUSDC for this swipe's mint premium — top up and swipe again."
             : longShotUnavailable
               ? "That long-shot side is too unlikely to place on this market — swipe the other way (the favored call)."
               : msg
@@ -560,7 +560,7 @@ export function ActiveDuel({
           ) : (
             <div className="text-base tracking-wider text-white/55 uppercase">
               {tier
-                ? `stake ${Number(STAKE_TIERS[tier]) / 1e6} dUSDC`
+                ? `stake ${Number(STAKE_TIERS[tier]) / 1e6} tUSDC`
                 : "staked duel"}
             </div>
           )}

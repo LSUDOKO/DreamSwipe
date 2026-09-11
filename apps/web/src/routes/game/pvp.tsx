@@ -306,7 +306,7 @@ function StakeSelector({
         onClick={() => setOpen((o) => !o)}
         aria-haspopup="listbox"
         aria-expanded={open}
-        aria-label={`stake ${value} dUSDC`}
+        aria-label={`stake ${value} tUSDC`}
         className="flex h-14 shrink-0 items-center gap-2 rounded-md border-2 border-black/55 bg-[#1b2548] px-3 shadow-[inset_0_-2px_0_rgba(0,0,0,0.35),inset_0_1px_0_rgba(255,255,255,0.08)] transition-colors hover:bg-[#243364] disabled:opacity-50"
       >
         <img
@@ -350,7 +350,7 @@ function StakeSelector({
                     </span>
                   </span>
                   <span className="text-sm tracking-[0.18em] text-white/55 uppercase">
-                    dUSDC
+                    tUSDC
                   </span>
                 </button>
               </li>
