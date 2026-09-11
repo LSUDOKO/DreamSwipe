@@ -48,10 +48,18 @@
  */
 @keyframes checker-drift {
   from {
-    background-position: 0 0, 64px 0, 64px -64px, 0 64px;
+    background-position:
+      0 0,
+      64px 0,
+      64px -64px,
+      0 64px;
   }
   to {
-    background-position: 128px 128px, 192px 128px, 192px 64px, 128px 192px;
+    background-position:
+      128px 128px,
+      192px 128px,
+      192px 64px,
+      128px 192px;
   }
 }
 
@@ -63,7 +71,11 @@
     linear-gradient(45deg, transparent 75%, #d4f6ff 75%),
     linear-gradient(135deg, transparent 75%, #d4f6ff 75%);
   background-size: 128px 128px;
-  background-position: 0 0, 64px 0, 64px -64px, 0 64px;
+  background-position:
+    0 0,
+    64px 0,
+    64px -64px,
+    0 64px;
   animation: checker-drift 12s linear infinite;
 }
 
@@ -75,7 +87,11 @@
     linear-gradient(45deg, transparent 75%, #243364 75%),
     linear-gradient(135deg, transparent 75%, #243364 75%);
   background-size: 128px 128px;
-  background-position: 0 0, 64px 0, 64px -64px, 0 64px;
+  background-position:
+    0 0,
+    64px 0,
+    64px -64px,
+    0 64px;
   animation: checker-drift 12s linear infinite;
 }
 
@@ -171,30 +187,19 @@
  * too, otherwise CSS's filter rule replaces (doesn't merge) on hover.
  */
 .default-btn-green-container.with-border {
-  filter:
-    drop-shadow(-2px 0 0 #000)
-    drop-shadow(2px 0 0 #000)
-    drop-shadow(0 -2px 0 #000)
-    drop-shadow(0 2px 0 #000);
+  filter: drop-shadow(-2px 0 0 #000) drop-shadow(2px 0 0 #000)
+    drop-shadow(0 -2px 0 #000) drop-shadow(0 2px 0 #000);
 }
 
 .default-btn-green-container.with-border:hover {
-  filter:
-    drop-shadow(-2px 0 0 #000)
-    drop-shadow(2px 0 0 #000)
-    drop-shadow(0 -2px 0 #000)
-    drop-shadow(0 2px 0 #000)
-    brightness(0.94)
+  filter: drop-shadow(-2px 0 0 #000) drop-shadow(2px 0 0 #000)
+    drop-shadow(0 -2px 0 #000) drop-shadow(0 2px 0 #000) brightness(0.94)
     saturate(0.95);
 }
 
 .default-btn-green-container.with-border:disabled {
-  filter:
-    drop-shadow(-2px 0 0 #000)
-    drop-shadow(2px 0 0 #000)
-    drop-shadow(0 -2px 0 #000)
-    drop-shadow(0 2px 0 #000)
-    grayscale(0.9);
+  filter: drop-shadow(-2px 0 0 #000) drop-shadow(2px 0 0 #000)
+    drop-shadow(0 -2px 0 #000) drop-shadow(0 2px 0 #000) grayscale(0.9);
 }
 
 /*
@@ -237,30 +242,21 @@
    * "selected" brightness boost baked into the same filter chain so
    * Tailwind brightness utilities don't replace and erase the outline.
    */
-  filter:
-    drop-shadow(-3px 0 0 #7c4f08)
-    drop-shadow(3px 0 0 #7c4f08)
-    drop-shadow(0 -3px 0 #7c4f08)
-    drop-shadow(0 3px 0 #7c4f08)
-    brightness(1.05) saturate(1.05);
+  filter: drop-shadow(-3px 0 0 #7c4f08) drop-shadow(3px 0 0 #7c4f08)
+    drop-shadow(0 -3px 0 #7c4f08) drop-shadow(0 3px 0 #7c4f08) brightness(1.05)
+    saturate(1.05);
 }
 
 .featured-nav-tile.is-inactive {
-  filter:
-    drop-shadow(-3px 0 0 #4d3308)
-    drop-shadow(3px 0 0 #4d3308)
-    drop-shadow(0 -3px 0 #4d3308)
-    drop-shadow(0 3px 0 #4d3308)
-    brightness(0.78) saturate(0.85);
+  filter: drop-shadow(-3px 0 0 #4d3308) drop-shadow(3px 0 0 #4d3308)
+    drop-shadow(0 -3px 0 #4d3308) drop-shadow(0 3px 0 #4d3308) brightness(0.78)
+    saturate(0.85);
 }
 
 .featured-nav-tile.is-inactive:hover {
-  filter:
-    drop-shadow(-3px 0 0 #6b4408)
-    drop-shadow(3px 0 0 #6b4408)
-    drop-shadow(0 -3px 0 #6b4408)
-    drop-shadow(0 3px 0 #6b4408)
-    brightness(0.92) saturate(0.95);
+  filter: drop-shadow(-3px 0 0 #6b4408) drop-shadow(3px 0 0 #6b4408)
+    drop-shadow(0 -3px 0 #6b4408) drop-shadow(0 3px 0 #6b4408) brightness(0.92)
+    saturate(0.95);
 }
 
 /*
@@ -297,29 +293,18 @@
     3px 3px,
     6px 3px
   );
-  filter:
-    drop-shadow(-2px 0 0 #000)
-    drop-shadow(2px 0 0 #000)
-    drop-shadow(0 -2px 0 #000)
-    drop-shadow(0 2px 0 #000);
+  filter: drop-shadow(-2px 0 0 #000) drop-shadow(2px 0 0 #000)
+    drop-shadow(0 -2px 0 #000) drop-shadow(0 2px 0 #000);
 }
 
 .pixel-tile:hover {
-  filter:
-    drop-shadow(-2px 0 0 #fff)
-    drop-shadow(2px 0 0 #fff)
-    drop-shadow(0 -2px 0 #fff)
-    drop-shadow(0 2px 0 #fff)
-    brightness(1.1);
+  filter: drop-shadow(-2px 0 0 #fff) drop-shadow(2px 0 0 #fff)
+    drop-shadow(0 -2px 0 #fff) drop-shadow(0 2px 0 #fff) brightness(1.1);
 }
 
 .pixel-tile:active {
-  filter:
-    drop-shadow(-2px 0 0 #fff)
-    drop-shadow(2px 0 0 #fff)
-    drop-shadow(0 -2px 0 #fff)
-    drop-shadow(0 2px 0 #fff)
-    brightness(0.95);
+  filter: drop-shadow(-2px 0 0 #fff) drop-shadow(2px 0 0 #fff)
+    drop-shadow(0 -2px 0 #fff) drop-shadow(0 2px 0 #fff) brightness(0.95);
 }
 
 /* Opt out of the hover/active white-border highlight — for decorative,
@@ -327,19 +312,13 @@
  * specificity than `.pixel-tile:hover`, so it wins regardless of order. */
 .pixel-tile.no-hover:hover,
 .pixel-tile.no-hover:active {
-  filter:
-    drop-shadow(-2px 0 0 #000)
-    drop-shadow(2px 0 0 #000)
-    drop-shadow(0 -2px 0 #000)
-    drop-shadow(0 2px 0 #000);
+  filter: drop-shadow(-2px 0 0 #000) drop-shadow(2px 0 0 #000)
+    drop-shadow(0 -2px 0 #000) drop-shadow(0 2px 0 #000);
 }
 
 .pixel-avatar {
-  filter:
-    drop-shadow(-2px 0 0 #000)
-    drop-shadow(2px 0 0 #000)
-    drop-shadow(0 -2px 0 #000)
-    drop-shadow(0 2px 0 #000);
+  filter: drop-shadow(-2px 0 0 #000) drop-shadow(2px 0 0 #000)
+    drop-shadow(0 -2px 0 #000) drop-shadow(0 2px 0 #000);
 }
 
 /*
@@ -365,8 +344,11 @@
      rectangle). */
   border-radius: 22px / 14px;
   /* Upper-left glass gleam, hinting at a light source on the face. */
-  background-image:
-    radial-gradient(ellipse 65% 45% at 28% 22%, rgba(255, 255, 255, 0.06), transparent 70%);
+  background-image: radial-gradient(
+    ellipse 65% 45% at 28% 22%,
+    rgba(255, 255, 255, 0.06),
+    transparent 70%
+  );
   /* Edge vignette: a short-range corner shadow + a softer outer bowl —
      together they suggest the screen surface curving away from the
      viewer at the edges. */
@@ -381,8 +363,15 @@
   inset: 0;
   background:
     linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.28) 50%),
-    linear-gradient(90deg, rgba(255, 0, 0, 0.06), rgba(0, 255, 0, 0.02), rgba(0, 0, 255, 0.06));
-  background-size: 100% 2px, 3px 100%;
+    linear-gradient(
+      90deg,
+      rgba(255, 0, 0, 0.06),
+      rgba(0, 255, 0, 0.02),
+      rgba(0, 0, 255, 0.06)
+    );
+  background-size:
+    100% 2px,
+    3px 100%;
   z-index: 2;
   pointer-events: none;
   mix-blend-mode: overlay;
@@ -404,17 +393,39 @@
 }
 
 @keyframes crt-flicker {
-  0%   { opacity: 0.03; }
-  10%  { opacity: 0.08; }
-  20%  { opacity: 0.02; }
-  30%  { opacity: 0.10; }
-  40%  { opacity: 0.04; }
-  50%  { opacity: 0.07; }
-  60%  { opacity: 0.03; }
-  70%  { opacity: 0.09; }
-  80%  { opacity: 0.04; }
-  90%  { opacity: 0.06; }
-  100% { opacity: 0.03; }
+  0% {
+    opacity: 0.03;
+  }
+  10% {
+    opacity: 0.08;
+  }
+  20% {
+    opacity: 0.02;
+  }
+  30% {
+    opacity: 0.1;
+  }
+  40% {
+    opacity: 0.04;
+  }
+  50% {
+    opacity: 0.07;
+  }
+  60% {
+    opacity: 0.03;
+  }
+  70% {
+    opacity: 0.09;
+  }
+  80% {
+    opacity: 0.04;
+  }
+  90% {
+    opacity: 0.06;
+  }
+  100% {
+    opacity: 0.03;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -489,10 +500,15 @@
   --radius-2xl: 16px;
   --radius-3xl: 24px;
   --radius-4xl: 32px;
-  --font-sans: "Inter Variable", -apple-system, BlinkMacSystemFont, "SF Pro Display", sans-serif;
+  --font-sans:
+    "Inter Variable", -apple-system, BlinkMacSystemFont, "SF Pro Display",
+    sans-serif;
   --font-mono: ui-monospace, "SFMono-Regular", "Menlo", monospace;
-  --font-display: "Flicky Display", "Inter Variable", -apple-system, BlinkMacSystemFont, sans-serif;
-  --font-pixel: "Flicky Pixel", ui-monospace, "SFMono-Regular", "Menlo", monospace;
+  --font-display:
+    "Flicky Display", "Inter Variable", -apple-system, BlinkMacSystemFont,
+    sans-serif;
+  --font-pixel:
+    "Flicky Pixel", ui-monospace, "SFMono-Regular", "Menlo", monospace;
 }
 
 /* Light mode — Linear inverse surfaces (less polished, dark is canonical). */
@@ -766,6 +782,36 @@ html[data-crt]::view-transition-new(root) {
 }
 @media (prefers-reduced-motion: reduce) {
   .countdown-urgent {
+    animation: none;
+  }
+}
+
+/* ─── Settlement reveal — the flip a duel card makes when its outcome
+   lands, used both by the live settle stream and by the COMPLETE-duel
+   replay in duel-view. A brief scale punch plus a colour-agnostic
+   brightness pop, so the same keyframe reads correctly whether the card
+   resolves emerald or rose.
+
+   scaleX (not a 3-D rotateY) keeps it cheap on mobile and avoids needing
+   a backface/perspective context on a tile that is only ~60px wide. */
+@keyframes card-reveal {
+  0% {
+    transform: scaleX(0.82);
+    filter: brightness(1.5);
+  }
+  60% {
+    transform: scaleX(1.04);
+  }
+  100% {
+    transform: scaleX(1);
+    filter: brightness(1);
+  }
+}
+.animate-card-reveal {
+  animation: card-reveal 260ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+@media (prefers-reduced-motion: reduce) {
+  .animate-card-reveal {
     animation: none;
   }
 }

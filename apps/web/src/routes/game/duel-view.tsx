@@ -13,6 +13,12 @@ import {
 } from "@/lib/flicky"
 import { useFlickySign } from "@/lib/use-flicky-sign"
 import { playSfx } from "@/lib/sound"
+import {
+  REPLAY_LEAD_IN_MS,
+  REPLAY_STEP_MS,
+  replaySeenKey,
+  shouldReplay,
+} from "@/lib/settlement-replay"
 import { PixelButton } from "@/components/pixel-button"
 import { StreamingPnlChart } from "@/components/streaming-pnl-chart"
 import { BtcSpotChart, type StrikeLine } from "@/components/btc-spot-chart"
@@ -233,6 +239,104 @@ export default function DuelView() {
     })
   }, [duel, ticks, address, nowMs])
 
+  // ── settlement replay ────────────────────────────────────────────
+  // A COMPLETE duel streams nothing (no live markets ⇒ no oracle ticks), so
+  // every card would otherwise paint its final colour at once and the whole
+  // match would be over before the page finished rendering. Instead, reveal
+  // the cards one at a time on first view.
+  //
+  // `revealedCount` gates only VISIBILITY — the outcomes are already final
+  // and are not recomputed here, so a replayed card cannot show anything
+  // other than what actually settled.
+  const cardCount = duel?.cards.length ?? 0
+  const [replaying, setReplaying] = useState(false)
+  const [revealedCount, setRevealedCount] = useState(0)
+  const replayStartedFor = useRef<string | null>(null)
+
+  useEffect(() => {
+    if (!duel) return
+    // Guard per duel id: the 5s poll replaces `duel` on every tick, and
+    // without this the replay would restart every five seconds forever.
+    if (replayStartedFor.current === duel.id) return
+
+    const reducedMotion =
+      globalThis.matchMedia?.("(prefers-reduced-motion: reduce)").matches ??
+      false
+    let seenBefore = false
+    try {
+      seenBefore = Boolean(
+        globalThis.localStorage?.getItem(replaySeenKey(duel.id))
+      )
+    } catch {
+      // Private mode / blocked storage: treat as unseen. Replaying twice is
+      // a far smaller failure than throwing on render.
+    }
+
+    replayStartedFor.current = duel.id
+
+    if (
+      !shouldReplay({
+        status: duel.status,
+        cardCount: duel.cards.length,
+        seenBefore,
+        reducedMotion,
+      })
+    ) {
+      // Not replaying: every card is visible immediately.
+      setReplaying(false)
+      setRevealedCount(duel.cards.length)
+      return
+    }
+
+    try {
+      globalThis.localStorage?.setItem(replaySeenKey(duel.id), "1")
+    } catch {
+      // Non-fatal; the replay just isn't remembered.
+    }
+
+    setReplaying(true)
+    setRevealedCount(0)
+    const timers = duel.cards.map((_, i) =>
+      setTimeout(
+        () => {
+          setRevealedCount(i + 1)
+          if (i === duel.cards.length - 1) setReplaying(false)
+        },
+        REPLAY_LEAD_IN_MS + i * REPLAY_STEP_MS
+      )
+    )
+    return () => timers.forEach(clearTimeout)
+  }, [duel])
+
+  // Keep a non-replaying view in sync as cards arrive (a live duel growing
+  // its deck, or the fetch landing after the effect above already ran).
+  useEffect(() => {
+    if (!replaying) setRevealedCount(cardCount)
+  }, [replaying, cardCount])
+
+  /** Reveal everything now — the replay is a flourish, never a gate. */
+  const skipReplay = useCallback(() => {
+    playSfx("click")
+    setReplaying(false)
+    setRevealedCount(cardCount)
+  }, [cardCount])
+
+  // Sound on each REVEALED card as it flips, so the replay is audible the
+  // same way a live settlement is. Keyed off `revealedCount` rather than the
+  // settle states, which for a COMPLETE duel never transition at all.
+  const prevRevealed = useRef(0)
+  useEffect(() => {
+    const from = prevRevealed.current
+    prevRevealed.current = revealedCount
+    if (!replaying || revealedCount <= from) return
+    for (let i = from; i < revealedCount; i++) {
+      const s = settleStates[i]
+      if (s === "win" || s === "loss") {
+        playSfx(s === "win" ? "card-win" : "card-loss")
+      }
+    }
+  }, [revealedCount, replaying, settleStates])
+
   // Sound only on a pending→settled transition observed while watching —
   // never a burst of sounds for already-settled cards on first load.
   const prevSettleStates = useRef<Array<"pending" | "win" | "loss"> | null>(
@@ -242,12 +346,15 @@ export default function DuelView() {
     const prev = prevSettleStates.current
     prevSettleStates.current = settleStates
     if (!prev || prev.length !== settleStates.length) return
+    // The replay drives its own per-reveal sfx; without this guard a card
+    // that settles mid-replay would play twice.
+    if (replaying) return
     settleStates.forEach((state, i) => {
       if (prev[i] === "pending" && state !== "pending") {
         playSfx(state === "win" ? "card-win" : "card-loss")
       }
     })
-  }, [settleStates])
+  }, [settleStates, replaying])
 
   // ── result modal ─────────────────────────────────────────────────
   const myIsP0 = sameAddress(duel?.creator, address)
@@ -271,6 +378,9 @@ export default function DuelView() {
   // button below reopens on demand). Demo mode never completes.
   useEffect(() => {
     if (demo || !duel || duel.status !== "COMPLETE" || !isParticipant) return
+    // Wait for the replay to finish. The modal covers the card grid, so
+    // popping it immediately would hide the very thing being revealed.
+    if (replaying) return
     const key = `flicky.result-seen.${duel.id}`
     try {
       if (globalThis.localStorage?.getItem(key)) return
@@ -283,7 +393,7 @@ export default function DuelView() {
     // external-system sync rather than derivable render state.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setResultOpen(true)
-  }, [demo, duel, isParticipant])
+  }, [demo, duel, isParticipant, replaying])
 
   // Initial fetch + polling (mirror of MyMatchTile's pattern — keeps
   // the view honest if the WS room subscription misses an update).
@@ -478,7 +588,10 @@ export default function DuelView() {
               ? "duel result"
               : "upcoming duel"}
         </h1>
-        <StatusBadge status={duel.status} />
+        <div className="flex items-center gap-2">
+          <LiveConnectionPill wsOpen={wsOpen} status={duel.status} />
+          <StatusBadge status={duel.status} />
+        </div>
       </header>
 
       <div className="grid grid-cols-2 gap-2 text-base tracking-wider uppercase">
@@ -537,6 +650,9 @@ export default function DuelView() {
         ticks={ticks}
         nowMs={nowMs}
         dead={dead}
+        revealedCount={revealedCount}
+        replaying={replaying}
+        onSkipReplay={skipReplay}
       />
 
       {dead && isLive && isParticipant && (
@@ -674,6 +790,48 @@ function Notice({ title, body }: { title: string; body: string }) {
   )
 }
 
+/**
+ * Live-connection state for the price stream.
+ *
+ * Only rendered on a duel that is still running. A COMPLETE duel has no live
+ * markets to subscribe to, so "disconnected" there is the normal resting
+ * state and flagging it would be noise — the card countdowns going quiet is
+ * expected, not a fault.
+ *
+ * This exists because a dropped socket previously looked identical to a
+ * working one: both subscriptions no-op when the socket is closed, so every
+ * countdown silently froze with nothing on screen to say why.
+ */
+function LiveConnectionPill({
+  wsOpen,
+  status,
+}: {
+  wsOpen: boolean
+  status: string
+}) {
+  if (status === "COMPLETE") return null
+  if (wsOpen) {
+    return (
+      <span
+        title="live price feed connected"
+        className="flex items-center gap-1.5 rounded bg-black/30 px-2 py-1 text-[10px] tracking-[0.16em] text-emerald-300/85 uppercase backdrop-blur-sm"
+      >
+        <span className="inline-block size-1.5 animate-pulse rounded-full bg-emerald-300 shadow-[0_0_5px_rgba(110,231,183,0.9)]" />
+        live
+      </span>
+    )
+  }
+  return (
+    <span
+      title="reconnecting to the price feed — countdowns are paused"
+      className="flex items-center gap-1.5 rounded bg-amber-900/40 px-2 py-1 text-[10px] tracking-[0.16em] text-amber-200/90 uppercase backdrop-blur-sm"
+    >
+      <span className="inline-block size-1.5 rounded-full bg-amber-300" />
+      reconnecting…
+    </span>
+  )
+}
+
 function shortAddr(a: string): string {
   if (!a || a.length < 12) return a
   return `${a.slice(0, 6)}…${a.slice(-4)}`
@@ -689,19 +847,37 @@ function CardList({
   ticks,
   nowMs,
   dead,
+  revealedCount,
+  replaying,
+  onSkipReplay,
 }: {
   duel: DuelLite
   myIsP0: boolean
   ticks: Record<string, Tick>
   nowMs: number
   dead: boolean
+  revealedCount: number
+  replaying: boolean
+  onSkipReplay: () => void
 }) {
   const slots = Math.max(duel.cardCount, duel.cards.length)
   return (
     <div className="flex flex-col gap-2">
-      <h3 className="text-xs tracking-[0.2em] text-white/55 uppercase">
-        cards
-      </h3>
+      <div className="flex items-baseline justify-between gap-2">
+        <h3 className="text-xs tracking-[0.2em] text-white/55 uppercase">
+          {replaying ? "settling…" : "cards"}
+        </h3>
+        {/* An animation the viewer cannot dismiss is an obstacle. */}
+        {replaying && (
+          <button
+            type="button"
+            onClick={onSkipReplay}
+            className="text-xs tracking-[0.18em] text-cyan-300/80 uppercase underline-offset-2 hover:underline"
+          >
+            skip
+          </button>
+        )}
+      </div>
       <div
         className="grid gap-1.5"
         style={{ gridTemplateColumns: `repeat(${slots}, minmax(0, 1fr))` }}
@@ -715,6 +891,7 @@ function CardList({
             ticks={ticks}
             nowMs={nowMs}
             dead={dead}
+            revealed={i < revealedCount}
           />
         ))}
       </div>
@@ -748,6 +925,7 @@ function CardTile({
   ticks,
   nowMs,
   dead,
+  revealed,
 }: {
   index: number
   duel: DuelLite
@@ -755,6 +933,12 @@ function CardTile({
   ticks: Record<string, Tick>
   nowMs: number
   dead: boolean
+  /**
+   * False only while a settlement replay has not yet reached this card.
+   * It gates VISIBILITY, never the outcome: the card renders in its normal
+   * pre-settle state until revealed, then shows exactly what settled.
+   */
+  revealed: boolean
 }) {
   const card = duel.cards[index]
   const outcome = duel.cardOutcomes.find((o) => o.cardIdx === index)
@@ -770,10 +954,13 @@ function CardTile({
       : swipeRow.p0Swipe
     : null
   const tick = card ? ticks[card.expiry_market_id] : undefined
+  // An unrevealed card must not read its settled PnL — otherwise the replay
+  // would hide the colour while still printing the final percentage beneath
+  // it, which gives the result away and looks broken besides.
   const myPnl: bigint | null =
-    outcome && (myIsP0 ? outcome.p0Pnl : outcome.p1Pnl) !== null
+    revealed && outcome && (myIsP0 ? outcome.p0Pnl : outcome.p1Pnl) !== null
       ? BigInt(myIsP0 ? outcome.p0Pnl! : outcome.p1Pnl!)
-      : card && mySwipe
+      : card && mySwipe && revealed
         ? tickCardPnl(toSwipeLite(mySwipe), card.strike, tick, nowMs)
         : null
 
@@ -788,8 +975,11 @@ function CardTile({
   // premium netted in, so it always reads exactly ±100% — only
   // `outcome.p{0,1}Pnl` (the real, premium-netted figure) is trustworthy
   // as a final number. See the `hasOutcome` branch below.
-  const settledNow = Boolean(outcome) || tick?.settled === true
-  const hasOutcome = Boolean(outcome)
+  // `revealed` gates both, so an unrevealed card takes the SAME "live"
+  // branch a genuinely unsettled card takes — the replay reuses the
+  // existing visual language instead of adding a parallel set of styles.
+  const settledNow = revealed && (Boolean(outcome) || tick?.settled === true)
+  const hasOutcome = revealed && Boolean(outcome)
   const state: CardState =
     settledNow && myPnl !== null ? (myPnl < 0n ? "loss" : "win") : "live"
   // Real duels never carry a per-card `expiryMs` from the server — only
@@ -807,7 +997,10 @@ function CardTile({
 
   return (
     <div
-      className={`border-2 border-black/55 px-1 py-1.5 text-center font-pixel transition-colors ${
+      // `key` on the state flips the element when a card resolves, so the
+      // reveal animation re-runs per card instead of only on first mount.
+      key={state}
+      className={`animate-card-reveal border-2 border-black/55 px-1 py-1.5 text-center font-pixel transition-colors ${
         state === "win"
           ? "bg-emerald-900/60"
           : state === "loss"
