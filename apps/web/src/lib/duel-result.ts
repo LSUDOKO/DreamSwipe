@@ -94,7 +94,7 @@ export function summarizeDuelResult(
   const returnPctLabel = freeDuel ? null : fmtPctSigned(payout, premium)
   const parts = [`${hits}/${totalCards} hits`]
   if (oddsLabel) parts.push(`${oddsLabel} odds`)
-  if (netLabel) parts.push(`${netLabel} dUSDC`)
+  if (netLabel) parts.push(`${netLabel} tUSDC`)
   return {
     outcome,
     hits,
@@ -103,7 +103,7 @@ export function summarizeDuelResult(
     oddsLabel,
     netLabel,
     returnPctLabel,
-    shareText: `flicky duel — ${parts.join(" · ")} — watch:`,
+    shareText: `dreamswipe duel — ${parts.join(" · ")} — watch:`,
   }
 }
 

@@ -174,7 +174,7 @@ export function tickCardPnl(
 export function fmtDusdcSigned(microUnits: bigint): string {
   const sign = microUnits < 0n ? "-" : microUnits > 0n ? "+" : " "
   const abs = microUnits < 0n ? -microUnits : microUnits
-  return `${sign}${(Number(abs) / 1e6).toFixed(4)} dUSDC`
+  return `${sign}${(Number(abs) / 1e6).toFixed(4)} tUSDC`
 }
 
 /**

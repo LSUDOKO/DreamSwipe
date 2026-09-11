@@ -40,7 +40,7 @@ test("staked duel from the winner's side", () => {
   expect(s.netLabel).toBe("+7")
   expect(s.returnPctLabel).toBe("+140%")
   expect(s.shareText).toBe(
-    "flicky duel — 3/5 hits · 2.4× odds · +7 dUSDC — watch:"
+    "dreamswipe duel — 3/5 hits · 2.4× odds · +7 tUSDC — watch:"
   )
 })
 
@@ -83,7 +83,7 @@ test("free duel: no odds/net, hits-only share text", () => {
   expect(s.oddsLabel).toBeNull()
   expect(s.netLabel).toBeNull()
   expect(s.returnPctLabel).toBeNull()
-  expect(s.shareText).toBe("flicky duel — 3/5 hits — watch:")
+  expect(s.shareText).toBe("dreamswipe duel — 3/5 hits — watch:")
 })
 
 test("fractional net trims trailing zeros", () => {

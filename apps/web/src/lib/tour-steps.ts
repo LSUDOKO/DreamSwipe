@@ -37,13 +37,13 @@ export const TOURS: Record<TourId, TourStep[]> = {
     },
     {
       targetId: "balance-wallet",
-      description: "Your wallet dUSDC balance — tap + to top up",
+      description: "Your wallet tUSDC balance — tap + to top up",
       placement: "bottom",
       route: "/game/home",
     },
     {
       targetId: "balance-gas",
-      description: "Manager balance funds your duels",
+      description: "Your STT balance — pays gas on Somnia",
       placement: "bottom",
       route: "/game/home",
     },
@@ -63,7 +63,7 @@ export const TOURS: Record<TourId, TourStep[]> = {
     },
     {
       targetId: "nav-shop",
-      description: "Swap: trade testnet SUI for dUSDC to fund your duels",
+      description: "Funds: claim testnet tUSDC and STT to fund your duels",
       placement: "top",
       route: "/game/home",
     },
