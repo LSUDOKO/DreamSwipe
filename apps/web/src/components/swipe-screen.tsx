@@ -25,8 +25,24 @@ import { BtcSpotChart } from "@/components/btc-spot-chart"
 /** Format a 1e9-scaled on-chain BTC price as a rounded USD string,
  *  e.g. "67235752957751" → "$67,236". Accepts the raw string or bigint. */
 // eslint-disable-next-line react-refresh/only-export-components
+/**
+ * Format a collateral-denominated price for display.
+ *
+ * MICRO-units (1e6), matching tUSDC on Shannon and every other formatter in
+ * the app (`pnl.ts`, streaming-pnl-chart's own `fmtUsd`). This divided by
+ * **1e9** until now — the Sui-era 9-decimal convention — which is exactly the
+ * decimals trap CLAUDE.md warns about: nothing reverts, the number just comes
+ * out 1000x too small. A practice strike of 538040 (≈$0.54) rendered as "$0",
+ * so every practice card asked "will BTC settle above $0?" and the live spot
+ * read "$0" beside it.
+ *
+ * Sub-dollar values keep 2 decimals; anything larger rounds to whole dollars,
+ * so a real BTC strike still reads "$62,533" rather than "$62,533.41".
+ */
 export function fmtUsd(v: string | bigint): string {
-  return `$${(Number(v) / 1e9).toLocaleString(undefined, { maximumFractionDigits: 0 })}`
+  const n = Number(v) / 1e6
+  const maximumFractionDigits = Math.abs(n) < 100 ? 2 : 0
+  return `$${n.toLocaleString(undefined, { maximumFractionDigits })}`
 }
 
 /** Time until a card settles, auto-scaled: ≥1h → "2h 47m", <1h → "47:12",

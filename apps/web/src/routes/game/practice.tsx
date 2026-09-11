@@ -70,7 +70,7 @@ function GamePracticeInner() {
         total={practice.cards.length}
         onExit={() => navigate("/game/home")}
         actions={
-          phase.kind === "SWIPING" && practice.roomState && account ? (
+          phase.kind === "SWIPING" && practice.roomState ? (
             <ChartChips
               roomState={practice.roomState}
               ticks={practice.ticks}
@@ -94,7 +94,11 @@ function GamePracticeInner() {
           dealing a practice deck…
         </p>
       )}
-      {phase.kind === "SWIPING" && practice.roomState && account && (
+      {/* No `account` guard: practice is fully simulated and runs on the
+          anonymous `youAddress` fallback above. Requiring a wallet here left
+          a signed-out player on a BLANK screen — the match started and the
+          phase advanced, but neither this nor LockupView below would render. */}
+      {phase.kind === "SWIPING" && practice.roomState && (
         <SwipeScreen
           roomState={practice.roomState}
           cardIdx={phase.cardIdx}
@@ -105,7 +109,7 @@ function GamePracticeInner() {
           deckExhausted={null}
         />
       )}
-      {phase.kind === "LOCKUP" && practice.roomState && account && (
+      {phase.kind === "LOCKUP" && practice.roomState && (
         <LockupView
           roomState={practice.roomState}
           cards={practice.cards}
